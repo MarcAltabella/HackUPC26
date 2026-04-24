@@ -1,0 +1,6 @@
+Here's the full x → f(x) → architecture for your Logic Engine. A few things to note about the structure:
+Inputs (x) - four environmental/operational vectors, each with its unit so the data contract is clear from day one: temperature in °C, contamination as a purity percentage, load in print hours/cycles, and maintenance as a normalized coefficient.
+Engine f(x) - the black box in the middle. The labels inside hint at the physics: Weibull distribution for time-to-failure events (like a blade wearing through), exponential decay for smoother degradation curves (like heating element resistance drifting), abrasive wear for the recoater, and thermal fatigue for the nozzle plate.
+Outputs (y) - three output channels per component: the normalized health index, the categorical status enum, and the component-specific physical metric (blade thickness in mm, clog probability 0-1, resistance in s2). These are the three values your Phase 2 simulation loop will consume.
+The dashed arc at the bottom represents cascading failure - a degraded recoater contaminating powder that then raises clog probability in the nozzle plate. That feedback loop is what separates a rich twin from three independent counters.
+Click any node to ask a follow-up about that specific part of the model.
