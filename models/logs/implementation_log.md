@@ -251,3 +251,224 @@ shock (p=0.05):
 
 ---
 
+## Milestone 6 - RL training run
+
+- Timestamp: 2026-04-25T14:11:27.668856
+- Episodes: 1
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- Resume mode: False
+- Alpha: 0.1
+- Gamma: 0.99
+- Epsilon schedule: start=1.0, end=0.05
+- Q-table path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/q_table.pkl
+- Mean episode reward: -4110.000
+- Mean survival steps: 1000.00
+- Failure rate: 0.000
+- Final epsilon: 1.000
+
+---
+
+## Milestone 6 - RL training run
+
+- Timestamp: 2026-04-25T14:15:15.165566
+- Episodes: 5000
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- Resume mode: False
+- Alpha: 0.1
+- Gamma: 0.99
+- Epsilon schedule: start=1.0, end=0.05
+- Q-table path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/q_table.pkl
+- Mean episode reward: -1627.770
+- Mean survival steps: 1000.00
+- Failure rate: 0.000
+- Final epsilon: 0.050
+
+---
+
+## Milestone 6 - RL training run
+
+- Timestamp: 2026-04-25T14:15:27.478041
+- Episodes: 10
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- Resume mode: False
+- Alpha: 0.1
+- Gamma: 0.99
+- Epsilon schedule: start=1.0, end=0.05
+- Q-table path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/q_table.pkl
+- Mean episode reward: -1955.000
+- Mean survival steps: 1000.00
+- Failure rate: 0.000
+- Final epsilon: 0.145
+
+---
+
+## Milestone 6 - RL training run
+
+- Timestamp: 2026-04-25T14:23:12.907625
+- Episodes: 5000
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- Resume mode: False
+- Alpha: 0.1
+- Gamma: 0.99
+- Epsilon schedule: start=1.0, end=0.05
+- Q-table path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/q_table.pkl
+- Mean episode reward: -1627.770
+- Mean survival steps: 1000.00
+- Failure rate: 0.000
+- Final epsilon: 0.050
+
+---
+
+
+---
+
+## Stage 3 - Milestone 1/2 bootstrap (2026-04-25T15:52:13+02:00)
+
+### Completed tasks
+
+- Implemented grounded historian query layer in Next.js server runtime (`frontend/lib/historian.ts`) backed by SQLite CLI queries against `models/data/simulation.db`.
+- Added structured response contracts for Stage 3 grounded outputs and alert cards (`frontend/lib/contracts.ts`).
+- Added deterministic diagnosis and proactive alert derivation logic (`frontend/lib/diagnosis.ts`).
+- Added shared HTTP query parsing and API response helpers (`frontend/lib/http.ts`).
+- Added Next.js API routes for core Milestone 1 tools:
+  - `GET /api/runs`
+  - `GET /api/state/latest`
+  - `GET /api/history/component`
+  - `GET /api/history/subsystem`
+  - `GET /api/compare`
+  - `GET /api/alerts`
+  - `GET /api/chat`
+- Replaced default app scaffold with Stage 3 companion shell:
+  - top global navigation with run/scenario selector
+  - persistent bottom co-pilot prompt bar (global)
+  - dashboard page with KPI cards + active alerts
+  - logs page with historian evidence tables
+  - machine page with machine view + right alert/action rail
+
+### Endpoint and schema decisions
+
+- Chosen implementation: Bun + Next.js full-stack routes instead of separate FastAPI service for this stage bootstrap.
+- Query layer returns JSON objects rooted in historian rows and adds explicit `citations` arrays in Stage 3 endpoints.
+- `/api/chat` returns grounded response contract fields:
+  - `severity`
+  - `summary`
+  - `answer`
+  - `reasoning_summary`
+  - `citations`
+  - `recommended_actions`
+- `/api/chat` additionally returns `tool_trace` for inspectable retrieval provenance.
+- Alerts are currently deterministic from latest tick component statuses (`CRITICAL`/`FAILED`) and include recommended actions from per-component playbooks.
+
+### UI decisions
+
+- Persistent prompt bar mounted in root layout to satisfy global availability on all main pages.
+- Main navigation includes three required Stage 3 pages:
+  - Dashboard
+  - Logs & Reports
+  - 3D Machine
+- Right rail on machine page persistently shows active alerts + recommended action snippets.
+- The machine center view is currently a stylized interactive subsystem map placeholder, ready to swap with a real `.glb` + `react-three-fiber` implementation in Milestone 6.
+
+### Open follow-up
+
+- Stage 3 DB tables (`alerts`, `task_log`, `reports`, `insights`) are not yet created; current implementation computes alerts in memory from historian state.
+- No background watcher process yet; alert feed is polling-based from deterministic recomputation.
+## Milestone 6 - RL training run
+
+- Timestamp: 2026-04-25T15:57:51.234170
+- Episodes: 10000
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- Resume mode: False
+- Alpha: 0.1
+- Gamma: 0.99
+- Epsilon schedule: start=1.0, end=0.05
+- Q-table path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/q_table.pkl
+- Mean episode reward: -1626.036
+- Mean survival steps: 1000.00
+- Failure rate: 0.000
+- Final epsilon: 0.050
+
+---
+
+## Milestone 6 - RL evaluation run
+
+- Timestamp: 2026-04-25T16:22:42.033467
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- Runs per scenario: 50
+- Baseline schedule: fixed_100
+- Q-table path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/q_table.pkl
+- Summary path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/rl_eval_summary.json
+- Runs path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/rl_eval_runs.csv
+- Overall RL mean TTF: 1000.0
+- Overall baseline mean TTF: 1000.0
+- Overall RL survival rate: 1.0
+- Overall baseline survival rate: 1.0
+
+---
+
+## Milestone 6 - RL training run
+
+- Timestamp: 2026-04-25T16:43:41.856352
+- Episodes: 10000
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- Resume mode: False
+- Alpha: 0.1
+- Gamma: 0.99
+- Epsilon schedule: start=1.0, end=0.05
+- Q-table path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/q_table.pkl
+- Mean episode reward: -1626.078
+- Mean survival steps: 1000.00
+- Failure rate: 0.000
+- Final epsilon: 0.050
+
+---
+
+## Milestone 6 - RL training run
+
+- Timestamp: 2026-04-25T17:00:27.816299
+- Episodes: 10000
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- Resume mode: False
+- Alpha: 0.1
+- Gamma: 0.99
+- Epsilon schedule: start=1.0, end=0.05
+- Q-table path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/q_table.pkl
+- Mean episode reward: -598.590
+- Mean survival steps: 1000.00
+- Failure rate: 0.000
+- Final epsilon: 0.050
+
+---
+
+## Milestone 6 - RL evaluation run
+
+- Timestamp: 2026-04-25T17:02:11.694078
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- Runs per scenario: 50
+- Baseline schedule: fixed_100
+- Q-table path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/q_table.pkl
+- Summary path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/rl_eval_summary.json
+- Runs path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/rl_eval_runs.csv
+- Overall RL mean TTF: 1000.0
+- Overall baseline mean TTF: 1000.0
+- Overall RL survival rate: 1.0
+- Overall baseline survival rate: 1.0
+
+---
+
+## Milestone 6 - RL evaluation run
+
+- Timestamp: 2026-04-25T17:11:47.285256
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- Runs per scenario: 50
+- Baseline schedule: light
+- Q-table path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/q_table.pkl
+- Summary path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/rl_eval_summary.json
+- Runs path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/rl_eval_runs.csv
+- Overall RL mean TTF: 1000.0
+- Overall baseline mean TTF: 526.813
+- Overall RL survival rate: 1.0
+- Overall baseline survival rate: 0.0
+
+---
+

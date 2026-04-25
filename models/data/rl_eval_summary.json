@@ -1,0 +1,76 @@
+{
+  "generated_at": "2026-04-25T17:11:47.284181",
+  "baseline_schedule": "light",
+  "runs_per_scenario": 50,
+  "scenarios": [
+    "baseline_nominal",
+    "humid_factory",
+    "chaos_run"
+  ],
+  "overall": {
+    "rl": {
+      "mean_time_to_first_failure": 1000.0,
+      "median_time_to_first_failure": 1000.0,
+      "mean_total_reward": 801.268,
+      "survival_rate": 1.0,
+      "failure_rate": 0.0
+    },
+    "baseline": {
+      "mean_time_to_first_failure": 526.813,
+      "median_time_to_first_failure": 527.0,
+      "mean_total_reward": 331.847,
+      "survival_rate": 0.0,
+      "failure_rate": 1.0
+    }
+  },
+  "per_scenario": {
+    "baseline_nominal": {
+      "rl": {
+        "mean_time_to_first_failure": 1000.0,
+        "median_time_to_first_failure": 1000.0,
+        "mean_total_reward": 801.599,
+        "survival_rate": 1.0,
+        "failure_rate": 0.0
+      },
+      "baseline": {
+        "mean_time_to_first_failure": 528.0,
+        "median_time_to_first_failure": 528.0,
+        "mean_total_reward": 332.871,
+        "survival_rate": 0.0,
+        "failure_rate": 1.0
+      }
+    },
+    "humid_factory": {
+      "rl": {
+        "mean_time_to_first_failure": 1000.0,
+        "median_time_to_first_failure": 1000.0,
+        "mean_total_reward": 801.334,
+        "survival_rate": 1.0,
+        "failure_rate": 0.0
+      },
+      "baseline": {
+        "mean_time_to_first_failure": 527.06,
+        "median_time_to_first_failure": 527.0,
+        "mean_total_reward": 332.082,
+        "survival_rate": 0.0,
+        "failure_rate": 1.0
+      }
+    },
+    "chaos_run": {
+      "rl": {
+        "mean_time_to_first_failure": 1000.0,
+        "median_time_to_first_failure": 1000.0,
+        "mean_total_reward": 800.87,
+        "survival_rate": 1.0,
+        "failure_rate": 0.0
+      },
+      "baseline": {
+        "mean_time_to_first_failure": 525.38,
+        "median_time_to_first_failure": 525.0,
+        "mean_total_reward": 330.587,
+        "survival_rate": 0.0,
+        "failure_rate": 1.0
+      }
+    }
+  }
+}

@@ -1,0 +1,46 @@
+nohup: ignoring input
+[train] device=cuda
+[train] episode=1/10000 scenario=baseline_nominal epsilon=1.000 steps=1000 reward=-4110.000
+[train] episode=250/10000 scenario=baseline_nominal epsilon=0.976 steps=1000 reward=-3825.000
+[train] episode=500/10000 scenario=humid_factory epsilon=0.953 steps=1000 reward=-3760.000
+[train] episode=750/10000 scenario=chaos_run epsilon=0.929 steps=1000 reward=-3465.000
+[train] episode=1000/10000 scenario=baseline_nominal epsilon=0.905 steps=1000 reward=-3380.000
+[train] episode=1250/10000 scenario=humid_factory epsilon=0.881 steps=1000 reward=-3555.000
+[train] episode=1500/10000 scenario=chaos_run epsilon=0.858 steps=1000 reward=-3380.000
+[train] episode=1750/10000 scenario=baseline_nominal epsilon=0.834 steps=1000 reward=-3150.000
+[train] episode=2000/10000 scenario=humid_factory epsilon=0.810 steps=1000 reward=-3035.000
+[train] episode=2250/10000 scenario=chaos_run epsilon=0.786 steps=1000 reward=-3010.000
+[train] episode=2500/10000 scenario=baseline_nominal epsilon=0.763 steps=1000 reward=-2760.000
+[train] episode=2750/10000 scenario=humid_factory epsilon=0.739 steps=1000 reward=-2815.000
+[train] episode=3000/10000 scenario=chaos_run epsilon=0.715 steps=1000 reward=-2595.000
+[train] episode=3250/10000 scenario=baseline_nominal epsilon=0.691 steps=1000 reward=-2445.000
+[train] episode=3500/10000 scenario=humid_factory epsilon=0.668 steps=1000 reward=-2245.000
+[train] episode=3750/10000 scenario=chaos_run epsilon=0.644 steps=1000 reward=-2090.000
+[train] episode=4000/10000 scenario=baseline_nominal epsilon=0.620 steps=1000 reward=-2090.000
+[train] episode=4250/10000 scenario=humid_factory epsilon=0.596 steps=1000 reward=-2025.000
+[train] episode=4500/10000 scenario=chaos_run epsilon=0.573 steps=1000 reward=-1740.000
+[train] episode=4750/10000 scenario=baseline_nominal epsilon=0.549 steps=1000 reward=-1760.000
+[train] episode=5000/10000 scenario=humid_factory epsilon=0.525 steps=1000 reward=-1395.000
+[train] episode=5250/10000 scenario=chaos_run epsilon=0.501 steps=1000 reward=-1430.000
+[train] episode=5500/10000 scenario=baseline_nominal epsilon=0.478 steps=1000 reward=-1415.000
+[train] episode=5750/10000 scenario=humid_factory epsilon=0.454 steps=1000 reward=-1240.000
+[train] episode=6000/10000 scenario=chaos_run epsilon=0.430 steps=1000 reward=-1125.000
+[train] episode=6250/10000 scenario=baseline_nominal epsilon=0.406 steps=1000 reward=-895.000
+[train] episode=6500/10000 scenario=humid_factory epsilon=0.383 steps=1000 reward=-735.000
+[train] episode=6750/10000 scenario=chaos_run epsilon=0.359 steps=1000 reward=-800.000
+[train] episode=7000/10000 scenario=baseline_nominal epsilon=0.335 steps=1000 reward=-550.000
+[train] episode=7250/10000 scenario=humid_factory epsilon=0.311 steps=1000 reward=-365.000
+[train] episode=7500/10000 scenario=chaos_run epsilon=0.288 steps=1000 reward=-430.000
+[train] episode=7750/10000 scenario=baseline_nominal epsilon=0.264 steps=1000 reward=-285.000
+[train] episode=8000/10000 scenario=humid_factory epsilon=0.240 steps=1000 reward=-260.000
+[train] episode=8250/10000 scenario=chaos_run epsilon=0.216 steps=1000 reward=-130.000
+[train] episode=8500/10000 scenario=baseline_nominal epsilon=0.193 steps=1000 reward=-45.000
+[train] episode=8750/10000 scenario=humid_factory epsilon=0.169 steps=1000 reward=265.000
+[train] episode=9000/10000 scenario=chaos_run epsilon=0.145 steps=1000 reward=165.000
+[train] episode=9250/10000 scenario=baseline_nominal epsilon=0.121 steps=1000 reward=430.000
+[train] episode=9500/10000 scenario=humid_factory epsilon=0.098 steps=1000 reward=435.000
+[train] episode=9750/10000 scenario=chaos_run epsilon=0.074 steps=1000 reward=590.000
+[train] episode=10000/10000 scenario=baseline_nominal epsilon=0.050 steps=1000 reward=755.000
+[train] completed
+[train] q_table_path=/home/swallow/Desktop/Projects/HackUPC2026/models/data/q_table.pkl
+[train] summary={'mean_reward': -1626.036, 'mean_steps': 1000.0, 'failure_rate': 0.0, 'final_epsilon': 0.05009500000000011}
