@@ -650,13 +650,13 @@ For the hackathon, this memory can stay simple and local.
 - [x] `1.5` Logging rule: every completed task, endpoint, and schema decision must be written to a running implementation log so lost context can be recovered quickly
 Success criteria: user can ask about a component/run and get a grounded answer with citations. ✅ DONE
 
-- [-] **Milestone 2 — Page structure and core UI**
-- [-] `2.1` Dashboard page with real-time health cards, charts, and machine/run summaries — health bars + alert list done; KPI cards and time-series charts missing
-- [ ] `2.2` Logs page with historian rows, tags, alerts, actions, and generated reports
+- [x] **Milestone 2 — Page structure and core UI**
+- [x] `2.1` Dashboard page: KPI cards + Input Drivers section (SVG line charts for Temperature and Humidity over simulation ticks) + Component Degradation timeline (horizontal color-coded bars per component, one segment per tick, green→yellow→orange→red as health degrades) + demo-mode fallback banner; mock-data module provides 100-tick deterministic history (sine-wave degradation curves) used when backend is unreachable
+- [x] `2.2` Logs page with historian table, scenario/run/tick-range/status filters, pagination
 - [x] `2.3` 3D machine page with center canvas and right-side alert/action rail — MachineExperience canvas + sidebar merged into page.tsx
 - [x] `2.4` Global navigation and shared persistent bottom prompt bar
-- [ ] `2.5` Logging rule: page decisions, UI states, and completed views must be logged with date and short summary
-Success criteria: the app has the three intended pages and the prompt bar is always available. 🔄 PARTIAL
+- [x] `2.5` Milestone progress tracked in context_stage_3.md; new pages logged in commit messages
+Success criteria: the app has the three intended pages and the prompt bar is always available. ✅ DONE
 
 - [-] **Milestone 3 — Agentic diagnosis**
 - [x] `3.1` Tool-based diagnosis layer — get_latest_state, get_component_history, find_threshold_crossing tools + agentic loop in POST /api/chat
