@@ -483,3 +483,43 @@ shock (p=0.05):
 
 ---
 
+## Milestone 6 - RL evaluation run
+
+- Timestamp: 2026-04-25T20:31:12.119011
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- Runs per scenario: 50
+- Baseline schedule: fixed_100
+- Q-table path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/q_table.pkl
+- Summary path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/rl_eval_summary.json
+- Runs path: /home/swallow/Desktop/Projects/HackUPC2026/models/data/rl_eval_runs.csv
+- Overall RL mean TTF: 1000.0
+- Overall baseline mean TTF: 1000.0
+- Overall RL survival rate: 1.0
+- Overall baseline survival rate: 1.0
+
+---
+
+## DQN training run
+
+- Timestamp: 2026-04-25T23:01:57.661518
+- Episodes: 10  workers=1  update_every=4
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- lr=0.001, gamma=0.99, batch=64
+- Mean reward: -872.132
+- Failure rate: 0.000
+- Grad updates: 10000
+
+---
+
+## DQN training run
+
+- Timestamp: 2026-04-25T23:22:56.983091
+- Episodes: 1000  workers=8  update_every=4
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- lr=0.001, gamma=0.99, batch=64
+- Mean reward: -602.817
+- Failure rate: 0.000
+- Grad updates: 1000000
+
+---
+

@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-04-25T17:11:47.284181",
-  "baseline_schedule": "light",
+  "generated_at": "2026-04-25T20:31:12.111205",
+  "baseline_schedule": "fixed_100",
   "runs_per_scenario": 50,
   "scenarios": [
     "baseline_nominal",
@@ -16,9 +16,16 @@
       "failure_rate": 0.0
     },
     "baseline": {
-      "mean_time_to_first_failure": 526.813,
-      "median_time_to_first_failure": 527.0,
-      "mean_total_reward": 331.847,
+      "mean_time_to_first_failure": 1000.0,
+      "median_time_to_first_failure": 1000.0,
+      "mean_total_reward": 769.881,
+      "survival_rate": 1.0,
+      "failure_rate": 0.0
+    },
+    "dqn": {
+      "mean_time_to_first_failure": 430.82,
+      "median_time_to_first_failure": 431.0,
+      "mean_total_reward": 267.722,
       "survival_rate": 0.0,
       "failure_rate": 1.0
     }
@@ -33,9 +40,16 @@
         "failure_rate": 0.0
       },
       "baseline": {
-        "mean_time_to_first_failure": 528.0,
-        "median_time_to_first_failure": 528.0,
-        "mean_total_reward": 332.871,
+        "mean_time_to_first_failure": 1000.0,
+        "median_time_to_first_failure": 1000.0,
+        "mean_total_reward": 770.229,
+        "survival_rate": 1.0,
+        "failure_rate": 0.0
+      },
+      "dqn": {
+        "mean_time_to_first_failure": 432.0,
+        "median_time_to_first_failure": 432.0,
+        "mean_total_reward": 268.705,
         "survival_rate": 0.0,
         "failure_rate": 1.0
       }
@@ -49,9 +63,16 @@
         "failure_rate": 0.0
       },
       "baseline": {
-        "mean_time_to_first_failure": 527.06,
-        "median_time_to_first_failure": 527.0,
-        "mean_total_reward": 332.082,
+        "mean_time_to_first_failure": 1000.0,
+        "median_time_to_first_failure": 1000.0,
+        "mean_total_reward": 769.998,
+        "survival_rate": 1.0,
+        "failure_rate": 0.0
+      },
+      "dqn": {
+        "mean_time_to_first_failure": 430.92,
+        "median_time_to_first_failure": 431.0,
+        "mean_total_reward": 267.829,
         "survival_rate": 0.0,
         "failure_rate": 1.0
       }
@@ -65,9 +86,16 @@
         "failure_rate": 0.0
       },
       "baseline": {
-        "mean_time_to_first_failure": 525.38,
-        "median_time_to_first_failure": 525.0,
-        "mean_total_reward": 330.587,
+        "mean_time_to_first_failure": 1000.0,
+        "median_time_to_first_failure": 1000.0,
+        "mean_total_reward": 769.417,
+        "survival_rate": 1.0,
+        "failure_rate": 0.0
+      },
+      "dqn": {
+        "mean_time_to_first_failure": 429.54,
+        "median_time_to_first_failure": 429.0,
+        "mean_total_reward": 266.632,
         "survival_rate": 0.0,
         "failure_rate": 1.0
       }
