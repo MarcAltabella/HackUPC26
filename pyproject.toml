@@ -5,5 +5,33 @@ description = "HP challenge"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "torch>=2.3",
     "numpy>=1.26",
 ]
+
+[dependency-groups]
+dev = ["pyright>=1.1.409", "ruff>=0.4.0"]
+
+# -----------------------
+# RUFF CONFIG (lint + format)
+# -----------------------
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"] # errores, imports, bugs, modernización
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# -----------------------
+# PYRIGHT CONFIG
+# -----------------------
+[tool.pyright]
+typeCheckingMode = "basic"
+reportMissingImports = true
+reportUnusedVariable = true
+reportOptionalMemberAccess = true
