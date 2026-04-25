@@ -1,16 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { MOCK_STATE, MOCK_HISTORY, type MachineState, type HistoryRow } from "@/lib/mock-data";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const API_BASE = "http://localhost:8000";
 const SCENARIO  = "baseline_nominal";
-const TICK_MS   = 333;
+const SPEED     = 3; // ticks per second
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -24,9 +22,9 @@ function toStatus(h: number): string {
 }
 
 function healthColor(h: number): string {
-  if (h > 0.7) return "#22c55e";
-  if (h > 0.4) return "#eab308";
-  if (h > 0.2) return "#f97316";
+  if (h > 0.7)  return "#22c55e";
+  if (h > 0.4)  return "#eab308";
+  if (h > 0.2)  return "#f97316";
   return "#ef4444";
 }
 
@@ -61,93 +59,197 @@ function getKpisFromRow(row: HistoryRow) {
   };
 }
 
-// ── KPI Card ──────────────────────────────────────────────────────────────────
+// Linear interpolation between two rows
+function lerpRows(a: HistoryRow, b: HistoryRow, t: number): HistoryRow {
+  const lerp = (x: number, y: number) => x + (y - x) * t;
+  return {
+    ...a,
+    health_recoating: lerp(a.health_recoating, b.health_recoating),
+    health_printhead: lerp(a.health_printhead, b.health_printhead),
+    health_thermal:   lerp(a.health_thermal,   b.health_thermal),
+    temperature:      lerp(a.temperature,      b.temperature),
+    humidity:         lerp(a.humidity,         b.humidity),
+  };
+}
 
-function KpiCard({ title, value, sub, accent }: {
-  title: string; value: string | number; sub?: string; accent?: string;
+// ── Blueprint panel ───────────────────────────────────────────────────────────
+
+function BpPanel({
+  title,
+  right,
+  children,
+  className = "",
+}: {
+  title: string;
+  right?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <Card>
-      <CardContent className="pt-4 pb-3 px-4">
-        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">{title}</p>
-        <p className="text-2xl font-mono font-semibold leading-none" style={{ color: accent }}>{value}</p>
-        {sub && <p className="text-[10px] text-muted-foreground mt-1">{sub}</p>}
-      </CardContent>
-    </Card>
+    <div className={`border border-border bg-card relative ${className}`}>
+      <span className="absolute top-0 left-0   w-2.5 h-2.5 border-t-[1.5px] border-l-[1.5px] border-primary/50 pointer-events-none" />
+      <span className="absolute top-0 right-0  w-2.5 h-2.5 border-t-[1.5px] border-r-[1.5px] border-primary/50 pointer-events-none" />
+      <span className="absolute bottom-0 left-0  w-2.5 h-2.5 border-b-[1.5px] border-l-[1.5px] border-primary/50 pointer-events-none" />
+      <span className="absolute bottom-0 right-0 w-2.5 h-2.5 border-b-[1.5px] border-r-[1.5px] border-primary/50 pointer-events-none" />
+      <div className="flex items-center gap-3 px-4 py-2 border-b border-border">
+        <span className="text-[10px] font-mono font-semibold text-foreground tracking-wide shrink-0">
+          {title}
+        </span>
+        <div className="flex-1 border-t border-white/20" />
+        {right}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// ── KPI Strip ─────────────────────────────────────────────────────────────────
+
+function KpiStrip({ animTick, critical, warning, avgHealth, scenarioId, runNumber }: {
+  animTick: number; critical: number; warning: number;
+  avgHealth: number; scenarioId: string; runNumber: number;
+}) {
+  const total = critical + warning;
+  const items = [
+    {
+      label: "Active Alerts",
+      value: String(total),
+      sub:   total === 0 ? "all nominal" : "require attention",
+      color: critical > 0 ? "#ef4444" : warning > 0 ? "#eab308" : "#22c55e",
+    },
+    {
+      label: "Critical",
+      value: String(critical),
+      sub:   warning > 0 ? `${warning} warning` : "none",
+      color: critical > 0 ? "#ef4444" : "#86efac",
+    },
+    {
+      label: "Avg Health",
+      value: `${(avgHealth * 100).toFixed(1)}%`,
+      sub:   toStatus(avgHealth),
+      color: healthColor(avgHealth),
+    },
+    {
+      label: "Simulation",
+      value: String(Math.floor(animTick)).padStart(3, "0"),
+      sub:   scenarioId,
+      color: "rgba(255,255,255,0.90)",
+    },
+  ];
+
+  return (
+    <div className="border border-border bg-card relative overflow-hidden">
+      <span className="absolute top-0 left-0   w-2.5 h-2.5 border-t-[1.5px] border-l-[1.5px] border-primary/50 pointer-events-none" />
+      <span className="absolute top-0 right-0  w-2.5 h-2.5 border-t-[1.5px] border-r-[1.5px] border-primary/50 pointer-events-none" />
+      <span className="absolute bottom-0 left-0  w-2.5 h-2.5 border-b-[1.5px] border-l-[1.5px] border-primary/50 pointer-events-none" />
+      <span className="absolute bottom-0 right-0 w-2.5 h-2.5 border-b-[1.5px] border-r-[1.5px] border-primary/50 pointer-events-none" />
+      <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-border">
+        {items.map(({ label, value, sub, color }) => (
+          <div key={label} className="px-4 py-3">
+            <p className="text-[10px] font-mono text-foreground/70 tracking-wide mb-1.5">{label}</p>
+            <p className="text-3xl font-mono font-bold leading-none tabular-nums transition-all duration-150" style={{ color }}>{value}</p>
+            <p className="text-[10px] font-mono text-muted-foreground mt-1.5 tracking-wide">{sub}</p>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
 // ── Line Chart ────────────────────────────────────────────────────────────────
-// data: visible slice (grows each tick); totalTicks: full series length (fixed axis)
 
-function LineChart({ data, totalTicks, color, label, unit, yMin, yMax }: {
-  data: number[]; totalTicks: number; color: string;
-  label: string; unit: string; yMin: number; yMax: number;
+function LineChart({ data, animTick, totalTicks, color, label, unit, yMin, yMax }: {
+  data: number[];        // full history of this series
+  animTick: number;      // float — current position in data
+  totalTicks: number;
+  color: string;
+  label: string;
+  unit: string;
+  yMin: number;
+  yMax: number;
 }) {
-  const W = 900, H = 72, padL = 34, padR = 8, padT = 6, padB = 18;
+  const W = 900, H = 80, padL = 36, padR = 8, padT = 6, padB = 18;
   const cW = W - padL - padR;
   const cH = H - padT - padB;
-  const n = data.length;
   const total = Math.max(totalTicks, 2);
 
-  const px = (i: number) => padL + (i / (total - 1)) * cW;
+  const px = (x: number) => padL + (x / (total - 1)) * cW;
   const py = (v: number) => padT + (1 - (v - yMin) / (yMax - yMin)) * cH;
 
-  const pts = n > 1 ? data.map((v, i) => `${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(" ") : "";
-  const areaPath = n > 1 ? [
-    `M${px(0).toFixed(1)},${(padT + cH).toFixed(1)}`,
-    ...data.map((v, i) => `L${px(i).toFixed(1)},${py(v).toFixed(1)}`),
-    `L${px(n - 1).toFixed(1)},${(padT + cH).toFixed(1)}Z`,
+  const floor = Math.min(Math.floor(animTick), data.length - 1);
+  const frac  = animTick - Math.floor(animTick);
+
+  // Visible data points: 0..floor (integer), plus a fractional interpolated tail
+  const visPoints: { x: number; y: number }[] = [];
+  for (let i = 0; i <= floor; i++) {
+    visPoints.push({ x: i, y: data[i] });
+  }
+  if (floor + 1 < data.length && frac > 0.001) {
+    const yInterp = data[floor] + (data[floor + 1] - data[floor]) * frac;
+    visPoints.push({ x: animTick, y: yInterp });
+  }
+
+  const pts = visPoints.map(({ x, y }) => `${px(x).toFixed(1)},${py(y).toFixed(1)}`).join(" ");
+
+  const areaPath = visPoints.length > 1 ? [
+    `M${px(visPoints[0].x).toFixed(1)},${(padT + cH).toFixed(1)}`,
+    ...visPoints.map(({ x, y }) => `L${px(x).toFixed(1)},${py(y).toFixed(1)}`),
+    `L${px(visPoints[visPoints.length - 1].x).toFixed(1)},${(padT + cH).toFixed(1)}Z`,
   ].join("") : "";
 
-  const yMid = (yMin + yMax) / 2;
-  const xTicks = [0, 0.2, 0.4, 0.6, 0.8, 1].map(p => Math.round(p * (total - 1)));
+  const last  = visPoints[visPoints.length - 1];
+  const yMid  = (yMin + yMax) / 2;
+  const xTicks = [0, 0.25, 0.5, 0.75, 1].map(p => Math.round(p * (total - 1)));
   const gradId = `lg-${label.replace(/\W/g, "")}`;
 
   return (
-    <div className="space-y-0.5">
-      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
-        {label} <span className="font-normal opacity-60 normal-case">{unit}</span>
-      </p>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: "72px" }} preserveAspectRatio="none">
+    <div className="space-y-1">
+      <div className="flex items-baseline gap-2">
+        <span className="text-[9px] font-mono font-bold text-primary tracking-[0.18em] uppercase">{label}</span>
+        <span className="text-[9px] font-mono text-muted-foreground">{unit}</span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: "80px" }} preserveAspectRatio="none">
         <defs>
           <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.28" />
-            <stop offset="100%" stopColor={color} stopOpacity="0.02" />
+            <stop offset="0%"   stopColor={color} stopOpacity="0.22" />
+            <stop offset="100%" stopColor={color} stopOpacity="0.01" />
           </linearGradient>
         </defs>
-        {/* Y gridlines */}
         {[yMin, yMid, yMax].map((v, i) => {
           const y = py(v);
           return (
             <g key={i}>
-              <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="rgba(255,255,255,0.06)" strokeWidth="0.7" />
-              <text x={padL - 3} y={y + 3.5} textAnchor="end" fill="#666" fontSize="8" fontFamily="ui-monospace,monospace">
+              <line x1={padL} y1={y} x2={W - padR} y2={y}
+                stroke="rgba(255,255,255,0.22)" strokeWidth="0.8"
+                strokeDasharray={i === 1 ? "4 3" : "none"}
+              />
+              <text x={padL - 4} y={y + 3.5}
+                textAnchor="end" fill="rgba(255,255,255,0.60)" fontSize="8"
+                fontFamily="ui-monospace,monospace">
                 {v.toFixed(0)}
               </text>
             </g>
           );
         })}
-        {/* X tick labels (fixed, based on totalTicks) */}
         {xTicks.map(t => (
-          <text key={t} x={px(t)} y={H - 2} textAnchor="middle" fill="#666" fontSize="8" fontFamily="ui-monospace,monospace">
+          <text key={t} x={px(t)} y={H - 2}
+            textAnchor="middle" fill="rgba(255,255,255,0.60)" fontSize="8"
+            fontFamily="ui-monospace,monospace">
             {t}
           </text>
         ))}
-        {/* Area fill */}
         {areaPath && <path d={areaPath} fill={`url(#${gradId})`} />}
-        {/* Line */}
-        {n > 1 && (
-          <polyline points={pts} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
+        {visPoints.length > 1 && (
+          <polyline points={pts} fill="none" stroke={color}
+            strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
         )}
-        {/* "Now" cursor */}
-        {n > 0 && (
+        {last && (
           <>
             <line
-              x1={px(n - 1)} y1={padT} x2={px(n - 1)} y2={padT + cH}
-              stroke={color} strokeWidth="0.8" strokeDasharray="3 2" opacity="0.45"
+              x1={px(last.x)} y1={padT} x2={px(last.x)} y2={padT + cH}
+              stroke={color} strokeWidth="0.9" strokeDasharray="3 2" opacity="0.5"
             />
-            <circle cx={px(n - 1)} cy={py(data[n - 1])} r="3" fill={color} />
+            <circle cx={px(last.x)} cy={py(last.y)} r="3" fill={color} />
           </>
         )}
       </svg>
@@ -156,29 +258,36 @@ function LineChart({ data, totalTicks, color, label, unit, yMin, yMax }: {
 }
 
 // ── Degradation Row ───────────────────────────────────────────────────────────
-// fullData: pre-computed health for every tick in history
-// filledCount: how many ticks are "revealed" so far
 
-function DegradationRow({ label, fullData, filledCount, currentHealth }: {
-  label: string; fullData: number[]; filledCount: number; currentHealth: number;
+function DegradationRow({ label, fullData, animTick, currentHealth }: {
+  label: string;
+  fullData: number[];
+  animTick: number;   // float
+  currentHealth: number;
 }) {
+  const floor = Math.floor(animTick);
+  const frac  = animTick - floor;
+
   return (
     <div className="flex items-center gap-2 text-[10px]">
-      <span className="text-muted-foreground w-[72px] shrink-0 text-right">{label}</span>
-      <div className="flex-1 flex gap-[1.5px] h-[16px] overflow-hidden rounded-[3px]" style={{ minWidth: 0 }}>
+      <span className="text-muted-foreground font-mono w-[72px] shrink-0 text-right tracking-wide">{label}</span>
+      <div className="flex-1 flex gap-[1.5px] h-[14px] overflow-hidden" style={{ minWidth: 0 }}>
         {fullData.map((h, i) => (
           <div
             key={i}
             className="flex-1 h-full"
             style={{
-              background: i < filledCount ? segColor(h) : "rgba(255,255,255,0.04)",
-              minWidth: 0,
-              transition: "background-color 0.2s ease",
+              background: i <= floor ? segColor(h) : "rgba(255,255,255,0.08)",
+              opacity:    i === floor ? frac : 1,
+              minWidth:   0,
             }}
           />
         ))}
       </div>
-      <span className="w-9 shrink-0 font-mono text-right text-[9px]" style={{ color: healthColor(currentHealth) }}>
+      <span
+        className="w-10 shrink-0 font-mono text-right text-[10px] tabular-nums"
+        style={{ color: healthColor(currentHealth) }}
+      >
         {(currentHealth * 100).toFixed(0)}%
       </span>
     </div>
@@ -190,10 +299,15 @@ function DegradationRow({ label, fullData, filledCount, currentHealth }: {
 export default function DashboardPage() {
   const [state,    setState]    = useState<MachineState>(MOCK_STATE);
   const [history,  setHistory]  = useState<HistoryRow[]>(MOCK_HISTORY);
-  const [loading,  setLoading]  = useState(true);
   const [isDemo,   setIsDemo]   = useState(true);
-  const [animTick, setAnimTick] = useState(0);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [animTick, setAnimTick] = useState(0); // float
+
+  // Mutable refs for the RAF loop — avoids closure-stale issues
+  const animTimeRef  = useRef(0);
+  const pausedRef    = useRef(false);
+  const lastTimeRef  = useRef<number | null>(null);
+  const rafRef       = useRef<number | null>(null);
+  const pauseTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Live state polling
   useEffect(() => {
@@ -206,8 +320,6 @@ export default function DashboardPage() {
         if (alive) { setState(d); setIsDemo(false); }
       } catch {
         if (alive) { setState(MOCK_STATE); setIsDemo(true); }
-      } finally {
-        if (alive) setLoading(false);
       }
     }
     fetchState();
@@ -223,173 +335,186 @@ export default function DashboardPage() {
       .catch(() => setHistory(MOCK_HISTORY));
   }, []);
 
-  // Animation loop: tick 0 → N-1, then pause 1.5 s and restart
+  // RAF animation loop — smooth fractional tick
   useEffect(() => {
     if (history.length === 0) return;
     const total = history.length;
-    let tick = 0;
-    let paused = false;
 
+    animTimeRef.current = 0;
+    pausedRef.current   = false;
+    lastTimeRef.current = null;
     setAnimTick(0);
-    if (intervalRef.current) clearInterval(intervalRef.current);
 
-    intervalRef.current = setInterval(() => {
-      if (paused) return;
-      tick += 1;
-      if (tick >= total) {
-        setAnimTick(total - 1);
-        paused = true;
-        setTimeout(() => { tick = 0; setAnimTick(0); paused = false; }, 1500);
-      } else {
-        setAnimTick(tick);
+    function frame(now: number) {
+      const dt = lastTimeRef.current === null ? 0 : (now - lastTimeRef.current) / 1000;
+      lastTimeRef.current = now;
+
+      if (!pausedRef.current) {
+        animTimeRef.current = Math.min(animTimeRef.current + dt * SPEED, total - 1);
+
+        if (animTimeRef.current >= total - 1) {
+          animTimeRef.current = total - 1;
+          pausedRef.current   = true;
+          pauseTimeout.current = setTimeout(() => {
+            animTimeRef.current = 0;
+            pausedRef.current   = false;
+            lastTimeRef.current = null;
+          }, 1500);
+        }
+
+        setAnimTick(animTimeRef.current);
       }
-    }, TICK_MS);
 
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+      rafRef.current = requestAnimationFrame(frame);
+    }
+
+    rafRef.current = requestAnimationFrame(frame);
+    return () => {
+      if (rafRef.current)       cancelAnimationFrame(rafRef.current);
+      if (pauseTimeout.current) clearTimeout(pauseTimeout.current);
+    };
   }, [history]);
 
   // ── Derived values ──────────────────────────────────────────────────────────
 
-  const totalTicks  = history.length || 1;
-  const filledCount = animTick + 1;
-  const currentRow  = history[animTick] ?? history[0];
+  const totalTicks = history.length || 1;
 
-  const { critical, warning, avgHealth } = currentRow
-    ? getKpisFromRow(currentRow)
-    : { critical: 0, warning: 0, avgHealth: 1 };
+  const floor = Math.min(Math.floor(animTick), history.length - 1);
+  const frac  = animTick - Math.floor(animTick);
+  const rowA  = history[floor]                          ?? history[0];
+  const rowB  = history[Math.min(floor + 1, history.length - 1)] ?? rowA;
 
-  // Visible slice for line charts
-  const visibleHistory = history.slice(0, filledCount);
-  const tempData  = visibleHistory.map(r => r.temperature);
-  const humidData = visibleHistory.map(r => r.humidity * 100);
+  const currentRow = lerpRows(rowA, rowB, frac);
+  const { critical, warning, avgHealth } = getKpisFromRow(currentRow);
 
-  // Y range fixed from full dataset so the axis doesn't jump
-  const allTemps = MOCK_HISTORY.map(r => r.temperature);
+  // Pre-computed full series for charts (stable references — recomputed only when history changes)
+  const tempFull  = useMemo(() => history.map(r => r.temperature),   [history]);
+  const humidFull = useMemo(() => history.map(r => r.humidity * 100), [history]);
+
+  const allTemps = useMemo(() => MOCK_HISTORY.map(r => r.temperature), []);
   const tempMin  = Math.floor(Math.min(...allTemps) - 1);
-  const tempMax  = Math.ceil(Math.max(...allTemps) + 1);
+  const tempMax  = Math.ceil(Math.max(...allTemps)  + 1);
 
-  // Full health arrays pre-computed from the complete history (for degradation rows)
-  const groups = [
+  const groups = useMemo(() => [
     {
       label: "Recoating",
       rows: [
-        { name: "Blade",   full: history.map(r => clamp(r.health_recoating + 0.04)), cur: clamp((currentRow?.health_recoating ?? 1) + 0.04) },
-        { name: "Motor",   full: history.map(r => clamp(r.health_recoating + 0.18)), cur: clamp((currentRow?.health_recoating ?? 1) + 0.18) },
-        { name: "Rail",    full: history.map(r => clamp(r.health_recoating - 0.06)), cur: clamp((currentRow?.health_recoating ?? 1) - 0.06) },
+        { name: "Blade",   full: history.map(r => clamp(r.health_recoating + 0.04)) },
+        { name: "Motor",   full: history.map(r => clamp(r.health_recoating + 0.18)) },
+        { name: "Rail",    full: history.map(r => clamp(r.health_recoating - 0.06)) },
       ],
     },
     {
       label: "Printhead",
       rows: [
-        { name: "Nozzle",    full: history.map(r => clamp(r.health_printhead - 0.04)), cur: clamp((currentRow?.health_printhead ?? 1) - 0.04) },
-        { name: "Resistors", full: history.map(r => clamp(r.health_printhead + 0.12)), cur: clamp((currentRow?.health_printhead ?? 1) + 0.12) },
-        { name: "Cleaning",  full: history.map(r => clamp(r.health_printhead + 0.02)), cur: clamp((currentRow?.health_printhead ?? 1) + 0.02) },
+        { name: "Nozzle",    full: history.map(r => clamp(r.health_printhead - 0.04)) },
+        { name: "Resistors", full: history.map(r => clamp(r.health_printhead + 0.12)) },
+        { name: "Cleaning",  full: history.map(r => clamp(r.health_printhead + 0.02)) },
       ],
     },
     {
       label: "Thermal",
       rows: [
-        { name: "Heater",     full: history.map(r => clamp(r.health_thermal + 0.06)), cur: clamp((currentRow?.health_thermal ?? 1) + 0.06) },
-        { name: "Sensor",     full: history.map(r => clamp(r.health_thermal + 0.02)), cur: clamp((currentRow?.health_thermal ?? 1) + 0.02) },
-        { name: "Insulation", full: history.map(r => clamp(r.health_thermal - 0.03)), cur: clamp((currentRow?.health_thermal ?? 1) - 0.03) },
+        { name: "Heater",     full: history.map(r => clamp(r.health_thermal + 0.06)) },
+        { name: "Sensor",     full: history.map(r => clamp(r.health_thermal + 0.02)) },
+        { name: "Insulation", full: history.map(r => clamp(r.health_thermal - 0.03)) },
       ],
     },
-  ];
+  ], [history]);
+
+  // Current health per component (interpolated)
+  const curR = currentRow.health_recoating;
+  const curP = currentRow.health_printhead;
+  const curT = currentRow.health_thermal;
+  const compCur: Record<string, Record<string, number>> = {
+    Recoating: { Blade: clamp(curR + 0.04), Motor: clamp(curR + 0.18), Rail: clamp(curR - 0.06) },
+    Printhead: { Nozzle: clamp(curP - 0.04), Resistors: clamp(curP + 0.12), Cleaning: clamp(curP + 0.02) },
+    Thermal:   { Heater: clamp(curT + 0.06), Sensor: clamp(curT + 0.02), Insulation: clamp(curT - 0.03) },
+  };
 
   return (
     <ScrollArea className="h-full">
       <div className="p-4 space-y-4 max-w-6xl mx-auto">
 
         {/* Demo banner */}
-        {isDemo && !loading && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/40 border border-border rounded-md px-3 py-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-yellow-400 shrink-0" />
-            <span>
-              <span className="font-semibold text-foreground">Demo mode</span> — showing synthetic data.
-              Start the backend (<code className="font-mono">uvicorn api:app --reload --port 8000</code>) to switch to live data.
+        {isDemo && (
+          <div className="flex items-center gap-3 border border-yellow-500/30 bg-yellow-950/20 px-4 py-2 font-mono">
+            <span className="text-yellow-400 text-[10px] tracking-widest shrink-0">⚠ DEMO_MODE</span>
+            <span className="text-[10px] text-yellow-400/60">
+              synthetic data · start backend (
+              <code className="text-yellow-300">uvicorn api:app --reload --port 8000</code>
+              ) to connect live historian
             </span>
           </div>
         )}
 
-        {/* KPI row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <KpiCard
-            title="Active Alerts"
-            value={critical + warning}
-            sub={`${critical} critical · ${warning} warning`}
-            accent={critical > 0 ? "#ef4444" : warning > 0 ? "#eab308" : "#22c55e"}
-          />
-          <KpiCard
-            title="Critical Components"
-            value={critical}
-            accent={critical > 0 ? "#ef4444" : undefined}
-          />
-          <KpiCard
-            title="Avg Subsystem Health"
-            value={`${(avgHealth * 100).toFixed(1)}%`}
-            accent={healthColor(avgHealth)}
-          />
-          <KpiCard
-            title="Simulation Tick"
-            value={animTick}
-            sub={`${state.scenario_id} · run ${state.run_number}`}
-          />
-        </div>
+        {/* KPI readout strip */}
+        <KpiStrip
+          animTick={animTick}
+          critical={critical}
+          warning={warning}
+          avgHealth={avgHealth}
+          scenarioId={state.scenario_id}
+          runNumber={state.run_number}
+        />
 
         {/* Input Drivers */}
-        <Card>
-          <CardHeader className="py-3 px-4">
-            <CardTitle className="text-xs font-semibold">Input Drivers</CardTitle>
-          </CardHeader>
-          <Separator />
-          <CardContent className="pt-3 pb-4 px-4 space-y-5">
+        <BpPanel
+          title="Input Drivers"
+          right={
+            <span className="text-[9px] font-mono text-muted-foreground tracking-wide">
+              t = {String(Math.floor(animTick)).padStart(3, "0")} / {totalTicks - 1}
+            </span>
+          }
+        >
+          <div className="px-4 py-3 space-y-5">
             <LineChart
-              data={tempData}
+              data={tempFull}
+              animTick={animTick}
               totalTicks={totalTicks}
               color="#f97316"
-              label="Temperature"
+              label="TEMPERATURE"
               unit="°C"
               yMin={tempMin}
               yMax={tempMax}
             />
             <LineChart
-              data={humidData}
+              data={humidFull}
+              animTick={animTick}
               totalTicks={totalTicks}
               color="#38bdf8"
-              label="Humidity"
+              label="HUMIDITY"
               unit="%"
               yMin={0}
               yMax={100}
             />
-          </CardContent>
-        </Card>
+          </div>
+        </BpPanel>
 
         {/* Component Degradation Timeline */}
-        <Card>
-          <CardHeader className="py-3 px-4">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <CardTitle className="text-xs font-semibold">Component Degradation</CardTitle>
-              <div className="flex items-center gap-3 text-[9px] text-muted-foreground">
-                {[
-                  { color: "#166534", label: "Functional" },
-                  { color: "#854d0e", label: "Warning" },
-                  { color: "#9a3412", label: "Degraded" },
-                  { color: "#991b1b", label: "Critical" },
-                ].map(({ color, label }) => (
-                  <span key={label} className="flex items-center gap-1">
-                    <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: color }} />
-                    {label}
-                  </span>
-                ))}
-              </div>
+        <BpPanel
+          title="Component Degradation"
+          right={
+            <div className="flex items-center gap-3 text-[9px] font-mono text-muted-foreground">
+              {[
+                { color: "#166534", label: "NOMINAL" },
+                { color: "#854d0e", label: "WARNING" },
+                { color: "#9a3412", label: "DEGRADED" },
+                { color: "#991b1b", label: "CRITICAL" },
+              ].map(({ color, label }) => (
+                <span key={label} className="flex items-center gap-1">
+                  <span className="inline-block w-2 h-2" style={{ background: color }} />
+                  {label}
+                </span>
+              ))}
             </div>
-          </CardHeader>
-          <Separator />
-          <CardContent className="pt-3 pb-4 px-4 space-y-4">
+          }
+        >
+          <div className="px-4 py-3 space-y-4">
 
             {/* Tick ruler */}
-            <div className="flex text-[9px] text-muted-foreground font-mono" style={{ paddingLeft: "80px", paddingRight: "44px" }}>
-              {[0, 0.2, 0.4, 0.6, 0.8, 1].map(p => (
+            <div className="flex text-[9px] font-mono text-muted-foreground" style={{ paddingLeft: "80px", paddingRight: "48px" }}>
+              {[0, 0.25, 0.5, 0.75, 1].map(p => (
                 <span key={p} className="flex-1 text-center first:text-left last:text-right">
                   {Math.round(p * (totalTicks - 1))}
                 </span>
@@ -398,30 +523,34 @@ export default function DashboardPage() {
 
             {groups.map(({ label, rows }) => (
               <div key={label} className="space-y-1.5">
-                <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-widest">{label}</p>
-                {rows.map(({ name, full, cur }) => (
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-foreground/70 text-[9px] font-mono font-bold shrink-0">▸</span>
+                  <span className="text-[10px] font-mono font-semibold tracking-wide text-foreground/80">{label}</span>
+                  <div className="flex-1 border-t border-white/15" />
+                </div>
+                {rows.map(({ name, full }) => (
                   <DegradationRow
                     key={name}
                     label={name}
                     fullData={full}
-                    filledCount={filledCount}
-                    currentHealth={cur}
+                    animTick={animTick}
+                    currentHealth={compCur[label][name] ?? 1}
                   />
                 ))}
               </div>
             ))}
 
-            {/* Footer */}
+            {/* Axis footer */}
             <div
-              className="flex text-[9px] text-muted-foreground font-mono border-t border-border/40 pt-2"
-              style={{ paddingLeft: "80px", paddingRight: "44px" }}
+              className="flex text-[9px] font-mono text-muted-foreground border-t border-border/40 pt-2"
+              style={{ paddingLeft: "80px", paddingRight: "48px" }}
             >
-              <span>t = 0</span>
-              <span className="flex-1 text-center opacity-50">← simulation tick →</span>
-              <span>t = {totalTicks - 1}</span>
+              <span>t=0</span>
+              <span className="flex-1 text-center opacity-40">◄── simulation tick ──►</span>
+              <span>t={totalTicks - 1}</span>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </BpPanel>
 
       </div>
     </ScrollArea>

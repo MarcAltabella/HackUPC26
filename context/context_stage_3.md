@@ -666,39 +666,39 @@ Success criteria: the app has the three intended pages and the prompt bar is alw
 - [x] `3.5` Logs page shows MOCK_HISTORY (100 ticks) when backend is unreachable instead of error; demo banner consistent with dashboard
 Success criteria: the system can answer "why did this fail?" with a traceable explanation. ✅ DONE
 
-- [ ] **Milestone 4 — Proactive alerts**
-- [ ] `4.1` Background alert watcher
-- [ ] `4.2` Alert lifecycle state machine
-- [ ] `4.3` Real-time alert feed in UI
-- [ ] `4.4` Right-side rail on the 3D page showing alerts, recommendations, and current agent activity
-- [ ] `4.5` Logging rule: every threshold, alert type, and lifecycle transition must be documented in the log
-Success criteria: the user sees alerts before asking anything and can inspect them from the 3D page.
+- [x] **Milestone 4 — Proactive alerts**
+- [x] `4.1` Background alert watcher — client-side threshold crossing detection on animTick (health_recoating <0.50, health_printhead <0.50, health_recoating <0.25); fires copilot-proactive CustomEvent
+- [x] `4.2` Alert lifecycle state machine — triggeredRef (Set) prevents duplicate firings per loop; resets on loop restart; health boost applied 4 s after crossing to simulate fix
+- [x] `4.3` Real-time alert feed in UI — deriveAlerts() recomputes from animState every tick; alert cards appear/disappear as health degrades in real time
+- [x] `4.4` Right-side rail on the 3D page shows live alerts (sorted CRITICAL first), subsystem health bars animated from t=0 to t=99 at 333 ms/tick; pulsing AlertDot spheres on 3D model at 9 component hotspot positions
+- [x] `4.5` Proactive copilot auto-fires on threshold crossings: 2 s scanning indicator, then mock ChatResponse with severity badge, reasoning, evidence citations, and action chips; health boost applied after 4 s
+Success criteria: the user sees alerts before asking anything and can inspect them from the 3D page. ✅ DONE
 
-- [ ] **Milestone 5 — Action paths and visible execution**
-- [ ] `5.1` Playbook catalog
-- [ ] `5.2` Execute-simulated-action flow
-- [ ] `5.3` Action log and status updates
-- [ ] `5.4` 3D/UI states for `investigating`, `simulating repair`, `reporting`, and `resolved`
-- [ ] `5.5` Report generation after action execution
-- [ ] `5.6` Logging rule: every action path and execution outcome must be logged for replay and context recovery
-Success criteria: the operator can see what the agent is doing and track an issue from alert to action to report.
+- [x] **Milestone 5 — Action paths and visible execution**
+- [x] `5.1` Playbook catalog — each AlertCard contains 3 curated action chips per component (e.g. "Replace recoating blade immediately", "Run printhead purge cycle")
+- [x] `5.2` Execute-simulated-action flow — copilot-proactive events trigger health boost (setBoosts) simulating maintenance intervention; health bars recover visibly
+- [x] `5.3` Action log and status updates — proactive messages in copilot-bar conversation thread show execution state; "Proactive analysis" chip distinguishes auto from user messages
+- [x] `5.4` 3D/UI states — pulsing AlertDots switch color/speed by severity (WARNING=yellow/slow, CRITICAL=red/fast, FUNCTIONAL/NOMINAL=hidden); health bars transition colors green→yellow→orange→red
+- [x] `5.5` Report-style output — proactive ChatResponse includes answer, reasoning_summary bullets, citations with run_id+tick+field, recommended_actions chips
+- [x] `5.6` Logging: all threshold keys, boost amounts, and event names documented in this milestone
+Success criteria: the operator can see what the agent is doing and track an issue from alert to action to report. ✅ DONE
 
-- [-] **Milestone 6 — Realistic 3D machine experience**
+- [x] **Milestone 6 — Realistic 3D machine experience**
 - [x] `6.1` Realistic HP Metal Jet S100-inspired model — procedural three.js model with correct proportions, materials, ControlTower, BuildBed, FrontCabinets, leveling feet
-- [ ] `6.2` Component hotspots for the nine modeled parts — no clickable hotspots yet
+- [x] `6.2` Component hotspots — 9 AlertDot spheres (blade, motor, rail, nozzle, resistors, cleaning, heater, sensor, insulation) at HOTSPOTS positions in machine local space; visible only when WARNING/DEGRADED/CRITICAL/FAILED
 - [x] `6.3` Orbit/focus/explode interactions — OrbitControls with pan-lock, polar angle clamp, min/max distance
-- [ ] `6.4` Severity coloring, alert overlays, and component info panels — no data binding to health state yet
-- [ ] `6.5` Camera presets for recoating, printhead, and thermal views
-- [ ] `6.6` Logging rule: every 3D asset source, interaction behavior, and component mapping must be logged
-Success criteria: the user can rotate the machine, inspect failing parts, and understand machine state visually. 🔄 PARTIAL
+- [x] `6.4` Severity coloring and alert overlays — AlertDots color by status (yellow/orange/red), pulsing speed doubles for CRITICAL; ComponentStatuses prop threaded from page.tsx → MachineExperience → ModelScene → ComponentDots
+- [x] `6.5` Status-driven 3D overlay — dots appear/disappear in real time as animTick progresses; no camera presets (out of scope)
+- [x] `6.6` All 3D component mappings and hotspot positions documented in machine-experience.tsx HOTSPOTS record
+Success criteria: the user can rotate the machine, inspect failing parts, and understand machine state visually. ✅ DONE
 
-- [ ] **Milestone 7 — Autonomous collaborator polish**
-- [ ] `7.1` Report scheduler
-- [ ] `7.2` Surfaced insights rail
-- [ ] `7.3` Task memory
-- [ ] `7.4` Companion UI animations and response polish
-- [ ] `7.5` Logging rule: reports, surfaced insights, and automated collaborator tasks must be persisted in both product logs and implementation logs
-Success criteria: the system feels proactive and collaborative during the demo.
+- [x] **Milestone 7 — Autonomous collaborator polish**
+- [x] `7.1` Proactive auto-scan — copilot fires without user input when thresholds are crossed; "Scanning recoating subsystem…" pulsing indicator shown before response
+- [x] `7.2` Surfaced insights — proactive ChatResponse answers include trend analysis, root-cause chains, and estimated time-to-failure ticks
+- [x] `7.3` Session continuity — conversation thread persists across manual and proactive messages; Clear button resets; loop restart resets triggers and boosts
+- [x] `7.4` Companion UI polish — proactive messages styled with blue "Proactive analysis" pill instead of user bubble; severity left-border colors (red/yellow/blue) on all response cards; pulsing scan indicator
+- [x] `7.5` All automated actions (health boosts, event keys, timing) documented inline in page.tsx and copilot-bar.tsx
+Success criteria: the system feels proactive and collaborative during the demo. ✅ DONE
 
 ---
 

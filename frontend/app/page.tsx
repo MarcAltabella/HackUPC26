@@ -1,17 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { MachineExperience } from "./machine-experience";
-import { MOCK_STATE, type MachineState } from "@/lib/mock-data";
+import { MachineExperience, type CompStatus, type ComponentStatuses } from "./machine-experience";
+import { MOCK_HISTORY, type MachineState } from "@/lib/mock-data";
+
+// ── Agent activity state ───────────────────────────────────────────────────────
+
+interface AgentStatus {
+  subsystem: string;
+  phase: "scanning" | "applying" | "fixed";
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
-const SCENARIO  = "baseline_nominal";
+const TICK_INTERVAL = 333;
+const LOOP_PAUSE    = 1500;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -26,6 +33,8 @@ interface RichAlert {
   actions: string[];
   query: string;
 }
+
+type Boosts = { recoating: number; printhead: number; thermal: number };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -46,10 +55,58 @@ function badgeVariant(s: "CRITICAL" | "WARNING") {
   return s === "CRITICAL" ? "destructive" as const : "outline" as const;
 }
 
-function toSeverity(status: string): "CRITICAL" | "WARNING" | null {
-  if (status === "FAILED" || status === "CRITICAL") return "CRITICAL";
-  if (status === "DEGRADED" || status === "WARNING") return "WARNING";
-  return null;
+function toStatus(h: number): string {
+  if (h > 0.85) return "FUNCTIONAL";
+  if (h > 0.70) return "NOMINAL";
+  if (h > 0.50) return "WARNING";
+  if (h > 0.25) return "DEGRADED";
+  if (h > 0.10) return "CRITICAL";
+  return "FAILED";
+}
+
+function deriveAnimState(tick: number, boosts: Boosts): MachineState {
+  const row = MOCK_HISTORY[tick];
+  const hr  = Math.min(1, row.health_recoating + boosts.recoating);
+  const hp  = Math.min(1, row.health_printhead + boosts.printhead);
+  const ht  = Math.min(1, row.health_thermal   + boosts.thermal);
+
+  return {
+    scenario_id: "humid_factory",
+    run_number:  0,
+    t:           tick,
+    recoating: {
+      subsystem_health: hr,
+      blade:  { health: Math.min(1, hr + 0.04), status: toStatus(Math.min(1, hr + 0.04)), thickness_mm: 0.41 },
+      motor:  { health: Math.min(1, hr + 0.18), status: toStatus(Math.min(1, hr + 0.18)), vibration_mm_s: 3.7 },
+      rail:   { health: Math.max(0, hr - 0.06), status: toStatus(Math.max(0, hr - 0.06)), deviation_um: 142 },
+    },
+    printhead: {
+      subsystem_health: hp,
+      nozzle:   { health: Math.max(0, hp - 0.04), status: toStatus(Math.max(0, hp - 0.04)), clog_probability: 0.61 },
+      resistor: { health: Math.min(1, hp + 0.12), status: toStatus(Math.min(1, hp + 0.12)), drift_pct: 4.2 },
+      cleaning: { health: Math.min(1, hp + 0.02), status: toStatus(Math.min(1, hp + 0.02)), efficiency: 0.54 },
+    },
+    thermal: {
+      subsystem_health: ht,
+      heater:     { health: Math.min(1, ht + 0.06), status: toStatus(Math.min(1, ht + 0.06)), resistance_ohm: 12.4 },
+      sensor:     { health: Math.min(1, ht + 0.02), status: toStatus(Math.min(1, ht + 0.02)), measurement_error_c: 0.8 },
+      insulation: { health: Math.max(0, ht - 0.03), status: toStatus(Math.max(0, ht - 0.03)), thermal_resistance: 1.82 },
+    },
+  };
+}
+
+function toCompStatuses(s: MachineState): ComponentStatuses {
+  return {
+    blade:      s.recoating.blade.status    as CompStatus,
+    motor:      s.recoating.motor.status    as CompStatus,
+    rail:       s.recoating.rail.status     as CompStatus,
+    nozzle:     s.printhead.nozzle.status   as CompStatus,
+    resistors:  s.printhead.resistor.status as CompStatus,
+    cleaning:   s.printhead.cleaning.status as CompStatus,
+    heater:     s.thermal.heater.status     as CompStatus,
+    sensor:     s.thermal.sensor.status     as CompStatus,
+    insulation: s.thermal.insulation.status as CompStatus,
+  };
 }
 
 function deriveAlerts(state: MachineState): RichAlert[] {
@@ -66,16 +123,17 @@ function deriveAlerts(state: MachineState): RichAlert[] {
     actions: string[],
     query: string,
   ) {
-    const severity = toSeverity(status);
-    if (!severity) return;
-    alerts.push({ id: id++, severity, subsystem, component, metric, summary, reasoning, actions, query });
+    const sev = status === "FAILED" || status === "CRITICAL" ? "CRITICAL" as const
+              : status === "DEGRADED" || status === "WARNING" ? "WARNING"  as const
+              : null;
+    if (!sev) return;
+    alerts.push({ id: id++, severity: sev, subsystem, component, metric, summary, reasoning, actions, query });
   }
 
   const s = state;
 
   add(
-    s.recoating.blade.status,
-    "Recoating", "Blade",
+    s.recoating.blade.status, "Recoating", "Blade",
     `${s.recoating.blade.thickness_mm.toFixed(2)} mm`,
     `Blade at ${healthPct(s.recoating.blade.health)}% health — wear rate above baseline`,
     [
@@ -88,8 +146,7 @@ function deriveAlerts(state: MachineState): RichAlert[] {
   );
 
   add(
-    s.recoating.motor.status,
-    "Recoating", "Motor",
+    s.recoating.motor.status, "Recoating", "Motor",
     `${s.recoating.motor.vibration_mm_s.toFixed(1)} mm/s`,
     `Vibration at ${s.recoating.motor.vibration_mm_s.toFixed(1)} mm/s — bearing fatigue detected`,
     [
@@ -102,8 +159,7 @@ function deriveAlerts(state: MachineState): RichAlert[] {
   );
 
   add(
-    s.recoating.rail.status,
-    "Recoating", "Rail",
+    s.recoating.rail.status, "Recoating", "Rail",
     `${s.recoating.rail.deviation_um.toFixed(0)} μm`,
     `Rail deviation ${s.recoating.rail.deviation_um.toFixed(0)} μm — ${(s.recoating.rail.deviation_um / 50).toFixed(1)}× tolerance`,
     [
@@ -116,8 +172,7 @@ function deriveAlerts(state: MachineState): RichAlert[] {
   );
 
   add(
-    s.printhead.nozzle.status,
-    "Printhead", "Nozzle",
+    s.printhead.nozzle.status, "Printhead", "Nozzle",
     `${(s.printhead.nozzle.clog_probability * 100).toFixed(0)}% clog risk`,
     `Nozzle at ${healthPct(s.printhead.nozzle.health)}% — clog probability critical`,
     [
@@ -130,8 +185,7 @@ function deriveAlerts(state: MachineState): RichAlert[] {
   );
 
   add(
-    s.printhead.resistor.status,
-    "Printhead", "Resistors",
+    s.printhead.resistor.status, "Printhead", "Resistors",
     `${s.printhead.resistor.drift_pct.toFixed(1)}% drift`,
     `Resistor drift at ${s.printhead.resistor.drift_pct.toFixed(1)}% — inconsistent drop energy`,
     [
@@ -144,8 +198,7 @@ function deriveAlerts(state: MachineState): RichAlert[] {
   );
 
   add(
-    s.printhead.cleaning.status,
-    "Printhead", "Cleaning",
+    s.printhead.cleaning.status, "Printhead", "Cleaning",
     `${(s.printhead.cleaning.efficiency * 100).toFixed(0)}% efficiency`,
     `Cleaning system at ${(s.printhead.cleaning.efficiency * 100).toFixed(0)}% — contamination feedback loop`,
     [
@@ -158,8 +211,7 @@ function deriveAlerts(state: MachineState): RichAlert[] {
   );
 
   add(
-    s.thermal.heater.status,
-    "Thermal", "Heater",
+    s.thermal.heater.status, "Thermal", "Heater",
     `${s.thermal.heater.resistance_ohm.toFixed(1)} Ω`,
     `Heater resistance drifting to ${s.thermal.heater.resistance_ohm.toFixed(1)} Ω`,
     [
@@ -172,8 +224,7 @@ function deriveAlerts(state: MachineState): RichAlert[] {
   );
 
   add(
-    s.thermal.sensor.status,
-    "Thermal", "Sensor",
+    s.thermal.sensor.status, "Thermal", "Sensor",
     `±${s.thermal.sensor.measurement_error_c.toFixed(1)} °C`,
     `Sensor error ±${s.thermal.sensor.measurement_error_c.toFixed(1)} °C — within ±1.0 °C spec`,
     [
@@ -186,8 +237,7 @@ function deriveAlerts(state: MachineState): RichAlert[] {
   );
 
   add(
-    s.thermal.insulation.status,
-    "Thermal", "Insulation",
+    s.thermal.insulation.status, "Thermal", "Insulation",
     `R = ${s.thermal.insulation.thermal_resistance.toFixed(2)}`,
     `Insulation resistance at ${s.thermal.insulation.thermal_resistance.toFixed(2)} — minor degradation`,
     [
@@ -199,27 +249,51 @@ function deriveAlerts(state: MachineState): RichAlert[] {
     `Is the thermal insulation degradation significant?`,
   );
 
-  return alerts.sort((a, b) => {
-    if (a.severity === b.severity) return 0;
-    return a.severity === "CRITICAL" ? -1 : 1;
-  });
+  return alerts.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "CRITICAL" ? -1 : 1));
 }
 
 // ── Alert Card ────────────────────────────────────────────────────────────────
 
-function AlertCard({ alert }: { alert: RichAlert }) {
+function AlertCard({
+  alert,
+  isActive,
+  onDismiss,
+}: {
+  alert: RichAlert;
+  isActive: boolean;
+  onDismiss: () => void;
+}) {
   const [open, setOpen] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // Auto-expand and scroll into view when this alert is activated by a dot click
+  useEffect(() => {
+    if (!isActive) return;
+    setOpen(true);
+    // Give React a tick to expand the card before scrolling
+    requestAnimationFrame(() => {
+      cardRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }, [isActive]);
 
   function askCopilot() {
     window.dispatchEvent(new CustomEvent("copilot-query", { detail: alert.query }));
   }
 
+  const activeBorder = isActive
+    ? alert.severity === "CRITICAL"
+      ? "ring-1 ring-red-500/60 shadow-[0_0_12px_rgba(239,68,68,0.25)]"
+      : "ring-1 ring-yellow-500/60 shadow-[0_0_12px_rgba(234,179,8,0.25)]"
+    : "";
+
   return (
-    <div className={`rounded-md border border-border border-l-2 text-xs overflow-hidden ${severityColor(alert.severity)}`}>
-      {/* Header */}
+    <div
+      ref={cardRef}
+      className={`rounded-md border border-border border-l-2 text-xs overflow-hidden transition-shadow duration-300 ${severityColor(alert.severity)} ${activeBorder}`}
+    >
       <button
         className="w-full text-left px-2.5 pt-2.5 pb-2 flex items-start gap-2 hover:bg-muted/20 transition-colors"
-        onClick={() => setOpen(o => !o)}
+        onClick={() => { setOpen(o => !o); if (isActive) onDismiss(); }}
       >
         <div className="flex-1 min-w-0 space-y-0.5">
           <div className="flex items-center gap-1.5">
@@ -227,6 +301,9 @@ function AlertCard({ alert }: { alert: RichAlert }) {
               {alert.severity}
             </Badge>
             <span className="font-medium truncate">{alert.component}</span>
+            {isActive && (
+              <span className="ml-auto shrink-0 h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
+            )}
           </div>
           <p className="text-[11px] text-muted-foreground">{alert.subsystem} · {alert.metric}</p>
           <p className="text-[11px] leading-snug">{alert.summary}</p>
@@ -234,7 +311,6 @@ function AlertCard({ alert }: { alert: RichAlert }) {
         <span className="text-muted-foreground shrink-0 mt-0.5 text-[10px]">{open ? "▲" : "▼"}</span>
       </button>
 
-      {/* Expanded diagnosis */}
       {open && (
         <div className="border-t border-border/50 px-2.5 py-2 space-y-2.5 bg-muted/10">
           <div>
@@ -273,34 +349,94 @@ function AlertCard({ alert }: { alert: RichAlert }) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function MachinePage() {
-  const [state,   setState]  = useState<MachineState>(MOCK_STATE);
-  const [isDemo,  setIsDemo] = useState(true);
-  const [loading, setLoading] = useState(true);
+  const [animTick,      setAnimTick]      = useState(0);
+  const [boosts,        setBoosts]        = useState<Boosts>({ recoating: 0, printhead: 0, thermal: 0 });
+  const [agentStatus,   setAgentStatus]   = useState<AgentStatus | null>(null);
+  const [blueprintView, setBlueprintView] = useState(false);
+  const [activeAlertComp, setActiveAlertComp] = useState<string | null>(null);
+  const triggeredRef  = useRef<Set<string>>(new Set());
+  const agentTimers   = useRef<ReturnType<typeof setTimeout>[]>([]);
 
+  // Animation loop
   useEffect(() => {
-    let alive = true;
-    async function poll() {
-      try {
-        const res = await fetch(`${API_BASE}/api/runs/${SCENARIO}/state/latest`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: MachineState = await res.json();
-        if (alive) { setState(data); setIsDemo(false); }
-      } catch {
-        if (alive) { setState(MOCK_STATE); setIsDemo(true); }
-      } finally {
-        if (alive) setLoading(false);
+    if (animTick >= 99) {
+      const id = setTimeout(() => {
+        triggeredRef.current.clear();
+        setBoosts({ recoating: 0, printhead: 0, thermal: 0 });
+        setAnimTick(0);
+      }, LOOP_PAUSE);
+      return () => clearTimeout(id);
+    }
+    const id = setTimeout(() => setAnimTick(t => t + 1), TICK_INTERVAL);
+    return () => clearTimeout(id);
+  }, [animTick]);
+
+  // Threshold crossing detection
+  useEffect(() => {
+    if (animTick === 0) return;
+    const prev = MOCK_HISTORY[animTick - 1];
+    const curr = MOCK_HISTORY[animTick];
+
+    function check(
+      key:       string,
+      field:     "health_recoating" | "health_printhead" | "health_thermal",
+      sub:       keyof Boosts,
+      threshold: number,
+    ) {
+      if ((prev[field] as number) > threshold &&
+          (curr[field] as number) <= threshold &&
+          !triggeredRef.current.has(key)) {
+        triggeredRef.current.add(key);
+        window.dispatchEvent(new CustomEvent("copilot-proactive", { detail: key }));
+        setTimeout(() => {
+          setBoosts(b => ({ ...b, [sub]: Math.min(0.4, b[sub] + 0.25) }));
+        }, 4000);
       }
     }
-    poll();
-    const id = setInterval(poll, 5_000);
-    return () => { alive = false; clearInterval(id); };
+
+    check("recoating-WARNING",  "health_recoating", "recoating", 0.50);
+    check("printhead-WARNING",  "health_printhead", "printhead", 0.50);
+    check("recoating-CRITICAL", "health_recoating", "recoating", 0.25);
+  }, [animTick]);
+
+  // Agent activity banner on proactive events
+  useEffect(() => {
+    function handleProactive(e: Event) {
+      const key = (e as CustomEvent<string>).detail;
+      const sub = key.startsWith("printhead") ? "Printhead" : "Recoating";
+      const sev = key.endsWith("CRITICAL") ? " (CRITICAL)" : "";
+
+      agentTimers.current.forEach(clearTimeout);
+      agentTimers.current = [];
+
+      setAgentStatus({ subsystem: sub + sev, phase: "scanning" });
+      agentTimers.current.push(
+        setTimeout(() => setAgentStatus({ subsystem: sub + sev, phase: "applying" }), 2500),
+        setTimeout(() => setAgentStatus({ subsystem: sub + sev, phase: "fixed"    }), 4500),
+        setTimeout(() => setAgentStatus(null),                                         7500),
+      );
+    }
+    window.addEventListener("copilot-proactive", handleProactive);
+    return () => {
+      window.removeEventListener("copilot-proactive", handleProactive);
+      agentTimers.current.forEach(clearTimeout);
+    };
   }, []);
 
-  const alerts = deriveAlerts(state);
+  // Dot click → look up component name and set as active alert
+  function handleDotClick(key: keyof ComponentStatuses) {
+    const compName = key.charAt(0).toUpperCase() + key.slice(1);
+    setActiveAlertComp(prev => prev === compName ? null : compName); // toggle
+  }
+
+  const animState = deriveAnimState(animTick, boosts);
+  const alerts    = deriveAlerts(animState);
+  const statuses  = toCompStatuses(animState);
+
   const subsystems = [
-    { label: "Recoating", health: state.recoating.subsystem_health },
-    { label: "Printhead", health: state.printhead.subsystem_health },
-    { label: "Thermal",   health: state.thermal.subsystem_health   },
+    { label: "Recoating", health: animState.recoating.subsystem_health },
+    { label: "Printhead", health: animState.printhead.subsystem_health },
+    { label: "Thermal",   health: animState.thermal.subsystem_health   },
   ];
 
   return (
@@ -308,17 +444,37 @@ export default function MachinePage() {
 
       {/* Center: 3D machine */}
       <div className="flex-1 relative overflow-hidden border-r border-border">
-        <MachineExperience />
-        {!loading && (
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-xs font-mono text-muted-foreground bg-background/70 rounded px-2 py-1 pointer-events-none">
-            {state.scenario_id} · run {state.run_number} · t = {state.t}
-            {isDemo && <span className="ml-2 text-yellow-400">· demo</span>}
-          </div>
-        )}
+        <MachineExperience
+          statuses={statuses}
+          blueprintMode={blueprintView}
+          onDotClick={handleDotClick}
+        />
+
+        {/* Blueprint toggle */}
+        <button
+          onClick={() => setBlueprintView(v => !v)}
+          className={[
+            "absolute top-3 left-3 z-10 flex items-center gap-1.5 h-7 px-3 rounded text-[11px] font-mono font-medium",
+            "border transition-all duration-200",
+            blueprintView
+              ? "bg-blue-900/80 border-blue-400/60 text-blue-200 shadow-[0_0_8px_rgba(56,152,255,0.4)]"
+              : "bg-background/70 border-border text-muted-foreground hover:text-foreground hover:border-blue-500/50",
+          ].join(" ")}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${blueprintView ? "bg-blue-400" : "bg-muted-foreground"}`} />
+          Blueprint
+        </button>
+
+        {/* Dot-click hint */}
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-xs font-mono text-muted-foreground bg-background/70 rounded px-2 py-1 pointer-events-none">
+          humid_factory · t = {animTick}
+          <span className="ml-2 text-yellow-400">· demo</span>
+          <span className="ml-2 opacity-50">· click dots to inspect</span>
+        </div>
       </div>
 
       {/* Right rail */}
-      <aside className="w-80 flex flex-col gap-3 p-3 bg-background overflow-hidden shrink-0">
+      <aside className="w-[440px] h-full flex flex-col gap-3 p-3 bg-background overflow-hidden shrink-0">
 
         {/* Active Diagnostics */}
         <Card className="flex-1 flex flex-col min-h-0">
@@ -336,17 +492,57 @@ export default function MachinePage() {
                     {alerts.filter(a => a.severity === "WARNING").length} warn
                   </Badge>
                 )}
+                {activeAlertComp && (
+                  <button
+                    onClick={() => setActiveAlertComp(null)}
+                    className="text-[9px] font-mono text-blue-400/70 hover:text-blue-300 transition-colors"
+                  >
+                    ✕ deselect
+                  </button>
+                )}
               </div>
             </CardTitle>
           </CardHeader>
           <Separator />
+
+          {/* Agent activity — inline banner */}
+          {agentStatus && (
+            <div className={[
+              "shrink-0 flex items-center gap-2.5 px-4 py-2 border-b",
+              agentStatus.phase === "fixed"
+                ? "bg-green-950/20 border-green-500/20"
+                : "bg-blue-950/20 border-blue-500/20",
+            ].join(" ")}>
+              <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                agentStatus.phase === "fixed" ? "bg-green-400" : "bg-blue-400 animate-pulse"
+              }`} />
+              <div className="flex-1 min-w-0">
+                <span className="text-[10px] font-semibold uppercase tracking-widest mr-2 text-muted-foreground">
+                  {agentStatus.phase === "fixed" ? "Maintenance Applied" : "Agent Activity"}
+                </span>
+                <span className="text-[11px] text-foreground">
+                  {agentStatus.phase === "scanning" && `Analyzing ${agentStatus.subsystem} subsystem…`}
+                  {agentStatus.phase === "applying" && "Applying corrective maintenance…"}
+                  {agentStatus.phase === "fixed"    && `${agentStatus.subsystem} recovering — monitoring`}
+                </span>
+              </div>
+            </div>
+          )}
+
           <CardContent className="flex-1 min-h-0 p-0">
             <ScrollArea className="h-full">
-              <div className="flex flex-col gap-1.5 p-3">
+              <div className="flex flex-col gap-2 p-3">
                 {alerts.length === 0 ? (
                   <p className="text-xs text-muted-foreground px-1">All components nominal.</p>
                 ) : (
-                  alerts.map(a => <AlertCard key={a.id} alert={a} />)
+                  alerts.map(a => (
+                    <AlertCard
+                      key={a.id}
+                      alert={a}
+                      isActive={a.component === activeAlertComp}
+                      onDismiss={() => setActiveAlertComp(null)}
+                    />
+                  ))
                 )}
               </div>
             </ScrollArea>
@@ -358,7 +554,7 @@ export default function MachinePage() {
           <CardHeader className="py-3 px-4">
             <CardTitle className="text-xs font-semibold flex items-center justify-between">
               <span>Subsystem Health</span>
-              <span className="text-muted-foreground font-normal text-[10px]">t = {state.t}</span>
+              <span className="text-muted-foreground font-normal text-[10px]">t = {animTick}</span>
             </CardTitle>
           </CardHeader>
           <Separator />

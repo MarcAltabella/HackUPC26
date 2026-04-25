@@ -1,7 +1,9 @@
 "use client";
 
-import { ContactShadows, Environment, OrbitControls, RoundedBox, useTexture } from "@react-three/drei";
-import { Canvas } from "@react-three/fiber";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { ContactShadows, Edges, Environment, Grid, OrbitControls, RoundedBox, useTexture } from "@react-three/drei";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import * as THREE from "three";
 import hpLogoImage from "../data/HP_logo_2025.svg.png";
 
 export const HP_METAL_JET_S100_DIMENSIONS = {
@@ -13,11 +15,178 @@ export const HP_METAL_JET_S100_DIMENSIONS = {
 
 type Vector3Tuple = [number, number, number];
 
-export type HpMetalJetS100ModelProps = {
-  position?: Vector3Tuple;
-  rotation?: Vector3Tuple;
-  scale?: number;
+// ── Blueprint context ─────────────────────────────────────────────────────────
+
+const BlueprintCtx = createContext(false);
+
+// ── Component status types ────────────────────────────────────────────────────
+
+export type CompStatus = "FUNCTIONAL" | "NOMINAL" | "WARNING" | "DEGRADED" | "CRITICAL" | "FAILED";
+
+export interface ComponentStatuses {
+  blade:      CompStatus;
+  motor:      CompStatus;
+  rail:       CompStatus;
+  nozzle:     CompStatus;
+  resistors:  CompStatus;
+  cleaning:   CompStatus;
+  heater:     CompStatus;
+  sensor:     CompStatus;
+  insulation: CompStatus;
+}
+
+type DotKey = keyof ComponentStatuses;
+type DotClickHandler = (key: DotKey) => void;
+
+function statusDotColor(s: CompStatus): string {
+  if (s === "FAILED"   || s === "CRITICAL") return "#ef4444";
+  if (s === "DEGRADED")                      return "#f97316";
+  if (s === "WARNING")                       return "#eab308";
+  return "#22c55e";
+}
+
+function statusVisible(s: CompStatus): boolean {
+  return s !== "FUNCTIONAL" && s !== "NOMINAL";
+}
+
+// ── Component hotspot positions (model-local, inside [0,0.09,0] group) ───────
+
+const HOTSPOTS: Record<DotKey, Vector3Tuple> = {
+  blade:      [ 0.14, 1.24,  0.54],
+  motor:      [-0.55, 1.20,  0.33],
+  rail:       [ 0.88, 1.17,  0.38],
+  nozzle:     [ 0.14, 1.44,  0.27],
+  resistors:  [ 0.55, 1.49,  0.16],
+  cleaning:   [-0.20, 1.38,  0.54],
+  heater:     [ 1.26, 0.73,  0.05],
+  sensor:     [ 0.85, 0.88, -0.15],
+  insulation: [ 1.48, 0.52,  0.10],
 };
+
+// Transform hotspot from model-local → world space
+// Outer group: position=[0,-0.78,0], rotation=[0,-0.42,0]
+// Inner model group: position=[0,0.09,0]
+function hotspotWorldPos(key: DotKey): THREE.Vector3 {
+  const [hx, hy, hz] = HOTSPOTS[key];
+  const v = new THREE.Vector3(hx, hy + 0.09, hz);
+  v.applyEuler(new THREE.Euler(0, -0.42, 0));
+  v.y -= 0.78;
+  return v;
+}
+
+// ── Camera focuser — lerps OrbitControls target toward focusWorld ─────────────
+
+function CameraFocuser({ focusWorld }: { focusWorld: THREE.Vector3 | null }) {
+  const controls  = useThree(s => s.controls) as any;
+  const targetRef = useRef<THREE.Vector3 | null>(null);
+
+  useEffect(() => {
+    targetRef.current = focusWorld ? focusWorld.clone() : null;
+  }, [focusWorld]);
+
+  useFrame(() => {
+    if (!targetRef.current || !controls) return;
+    if (controls.target.distanceTo(targetRef.current) < 0.003) return;
+    controls.target.lerp(targetRef.current, 0.09);
+    controls.update();
+  });
+
+  return null;
+}
+
+// ── Alert dot mesh ────────────────────────────────────────────────────────────
+
+function AlertDot({
+  position,
+  status,
+  dotKey,
+  onDotClick,
+}: {
+  position: Vector3Tuple;
+  status: CompStatus;
+  dotKey: DotKey;
+  onDotClick?: DotClickHandler;
+}) {
+  const coreRef = useRef<THREE.Mesh>(null!);
+  const visible = statusVisible(status);
+  const isCrit  = status === "CRITICAL" || status === "FAILED";
+  const color   = statusDotColor(status);
+  const speed   = isCrit ? 5.5 : 2.5;
+  const amp     = isCrit ? 0.45 : 0.18;
+
+  useFrame(({ clock }) => {
+    if (!coreRef.current || !visible) return;
+    const t = clock.getElapsedTime();
+    coreRef.current.scale.setScalar(1 + amp * Math.abs(Math.sin(t * speed)));
+  });
+
+  if (!visible) return null;
+
+  function handleClick(e: { stopPropagation: () => void }) {
+    e.stopPropagation();
+    onDotClick?.(dotKey);
+  }
+
+  function handlePointerOver(e: { stopPropagation: () => void }) {
+    e.stopPropagation();
+    document.body.style.cursor = "pointer";
+  }
+
+  function handlePointerOut() {
+    document.body.style.cursor = "auto";
+  }
+
+  return (
+    <group position={position}>
+      {/* Clickable core (pulsing) */}
+      <mesh
+        ref={coreRef}
+        onClick={handleClick}
+        onPointerOver={handlePointerOver}
+        onPointerOut={handlePointerOut}
+      >
+        <sphereGeometry args={[0.055, 14, 14]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={2.2} />
+      </mesh>
+      {/* Halo — also clickable */}
+      <mesh onClick={handleClick} onPointerOver={handlePointerOver} onPointerOut={handlePointerOut}>
+        <sphereGeometry args={[0.088, 10, 10]} />
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={0.3}
+          transparent
+          opacity={0.2}
+          depthWrite={false}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+function ComponentDots({
+  statuses,
+  onDotClick,
+}: {
+  statuses: ComponentStatuses;
+  onDotClick?: DotClickHandler;
+}) {
+  return (
+    <>
+      {(Object.keys(HOTSPOTS) as DotKey[]).map(key => (
+        <AlertDot
+          key={key}
+          dotKey={key}
+          position={HOTSPOTS[key]}
+          status={statuses[key]}
+          onDotClick={onDotClick}
+        />
+      ))}
+    </>
+  );
+}
+
+// ── Blueprint-aware material ──────────────────────────────────────────────────
 
 function Material({
   color,
@@ -34,6 +203,21 @@ function Material({
   emissiveIntensity?: number;
   clearcoat?: number;
 }) {
+  const bp = useContext(BlueprintCtx);
+  if (bp) {
+    return (
+      <>
+        <meshStandardMaterial
+          color="#040c1e"
+          emissive="#1840ff"
+          emissiveIntensity={0.28}
+          transparent
+          opacity={0.55}
+        />
+        <Edges color="#4db8ff" threshold={15} />
+      </>
+    );
+  }
   return (
     <meshPhysicalMaterial
       color={color}
@@ -47,9 +231,12 @@ function Material({
   );
 }
 
-function HpLogoDecal() {
-  const logo = useTexture(hpLogoImage.src);
+// ── Machine model subcomponents ───────────────────────────────────────────────
 
+function HpLogoDecal() {
+  const bp   = useContext(BlueprintCtx);
+  const logo = useTexture(hpLogoImage.src);
+  if (bp) return null;
   return (
     <mesh position={[-0.03, 0.45, 0.688]}>
       <planeGeometry args={[0.34, 0.34]} />
@@ -88,6 +275,7 @@ function LevelingFoot({ position }: { position: Vector3Tuple }) {
 }
 
 function ControlTower() {
+  const bp = useContext(BlueprintCtx);
   return (
     <group position={[-1.82, 1.09, 0]}>
       <RoundedBox args={[0.72, 2.18, 0.72]} radius={0.035} smoothness={5}>
@@ -96,10 +284,12 @@ function ControlTower() {
       <RoundedBox args={[0.52, 0.34, 0.045]} radius={0.018} position={[0, 0.54, 0.385]} smoothness={4}>
         <Material color="#0b0d0e" metalness={0.28} roughness={0.24} />
       </RoundedBox>
-      <mesh position={[0, 0.54, 0.412]}>
-        <planeGeometry args={[0.38, 0.22]} />
-        <meshStandardMaterial color="#d9f7ff" emissive="#7ddcff" emissiveIntensity={0.24} roughness={0.28} />
-      </mesh>
+      {!bp && (
+        <mesh position={[0, 0.54, 0.412]}>
+          <planeGeometry args={[0.38, 0.22]} />
+          <meshStandardMaterial color="#d9f7ff" emissive="#7ddcff" emissiveIntensity={0.24} roughness={0.28} />
+        </mesh>
+      )}
       <RoundedBox args={[0.25, 0.13, 0.04]} radius={0.014} position={[0, 0.18, 0.385]} smoothness={4}>
         <Material color="#0c1215" metalness={0.32} roughness={0.3} emissive="#22b9ff" emissiveIntensity={0.09} />
       </RoundedBox>
@@ -118,7 +308,6 @@ function ControlTower() {
 
 function TopHood() {
   const panels = [-0.85, -0.28, 0.29, 0.86, 1.43];
-
   return (
     <group>
       <RoundedBox args={[2.92, 0.3, 0.98]} radius={0.028} position={[0.37, 1.55, 0]} smoothness={4}>
@@ -209,7 +398,7 @@ function BuildBed() {
       </RoundedBox>
       <mesh position={[0.14, 1.17, 0.36]} rotation={[-Math.PI / 2, 0, 0]}>
         <planeGeometry args={[1.12, 0.34]} />
-        <meshStandardMaterial color="#222528" metalness={0.38} roughness={0.18} transparent opacity={0.82} />
+        <Material color="#222528" metalness={0.38} roughness={0.18} />
       </mesh>
       <mesh position={[0.16, 1.184, 0.522]}>
         <boxGeometry args={[0.82, 0.012, 0.012]} />
@@ -247,10 +436,20 @@ function SideAndRearDetails() {
   );
 }
 
+export type HpMetalJetS100ModelProps = {
+  position?: Vector3Tuple;
+  rotation?: Vector3Tuple;
+  scale?: number;
+  statuses?: ComponentStatuses;
+  onDotClick?: DotClickHandler;
+};
+
 export function HpMetalJetS100Model({
   position = [0, 0, 0],
   rotation = [0, 0, 0],
   scale = 1,
+  statuses,
+  onDotClick,
 }: HpMetalJetS100ModelProps) {
   return (
     <group position={position} rotation={rotation} scale={scale}>
@@ -268,46 +467,113 @@ export function HpMetalJetS100Model({
         <PowderPort />
         <SideAndRearDetails />
         {[
-          [-2.11, -0.03, 0.32],
-          [-1.55, -0.03, -0.31],
-          [-0.82, -0.03, 0.48],
-          [0.23, -0.03, 0.48],
-          [1.45, -0.03, 0.48],
-          [1.48, -0.03, -0.38],
+          [-2.11, -0.03, 0.32], [-1.55, -0.03, -0.31],
+          [-0.82, -0.03, 0.48], [ 0.23, -0.03,  0.48],
+          [ 1.45, -0.03, 0.48], [ 1.48, -0.03, -0.38],
         ].map((foot) => (
           <LevelingFoot key={foot.join(",")} position={foot as Vector3Tuple} />
         ))}
+        {statuses && <ComponentDots statuses={statuses} onDotClick={onDotClick} />}
       </group>
     </group>
   );
 }
 
-function ModelScene() {
+// ── Scene ─────────────────────────────────────────────────────────────────────
+
+function ModelScene({
+  statuses,
+  blueprintMode,
+  onDotClick,
+}: {
+  statuses?: ComponentStatuses;
+  blueprintMode?: boolean;
+  onDotClick?: DotClickHandler;
+}) {
+  const bp = !!blueprintMode;
+  const [focusWorld, setFocusWorld] = useState<THREE.Vector3 | null>(null);
+
+  function handleDotClick(key: DotKey) {
+    setFocusWorld(hotspotWorldPos(key));
+    onDotClick?.(key);
+  }
+
   return (
-    <Canvas camera={{ position: [4.4, 2.5, 4.9], fov: 34 }} dpr={[1, 2]} shadows>
-      <color attach="background" args={["#050607"]} />
-      <ambientLight intensity={0.42} />
-      <directionalLight position={[4.8, 6.2, 4.2]} intensity={2.55} castShadow shadow-mapSize-width={2048} shadow-mapSize-height={2048} />
-      <directionalLight position={[-4.2, 3, -3.6]} intensity={0.52} />
-      <pointLight position={[-1.9, 1.4, 1.2]} intensity={0.8} color="#9fe8ff" />
-      <Environment preset="warehouse" />
-      <group rotation={[0, -0.42, 0]} position={[0, -0.78, 0]}>
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.012, 0]} receiveShadow>
-          <planeGeometry args={[8, 6]} />
-          <meshStandardMaterial color="#0d1011" roughness={0.86} metalness={0.08} />
-        </mesh>
-        <HpMetalJetS100Model />
-      </group>
-      <ContactShadows position={[0, -0.79, 0]} opacity={0.46} blur={1.8} scale={5.5} far={4} />
-      <OrbitControls enablePan={false} target={[0, 0.42, 0]} minDistance={3.1} maxDistance={7.2} maxPolarAngle={1.42} />
-    </Canvas>
+    <BlueprintCtx.Provider value={bp}>
+      <Canvas camera={{ position: [4.4, 2.5, 4.9], fov: 34 }} dpr={[1, 2]} shadows={!bp}>
+        <color attach="background" args={[bp ? "#0048b8" : "#050607"]} />
+
+        {bp ? (
+          <>
+            <ambientLight intensity={1.4} color="#3a7fff" />
+            <directionalLight position={[4.8, 6.2, 4.2]}  intensity={1.6} color="#60b0ff" />
+            <directionalLight position={[-4.2, 3,  -3.6]} intensity={0.6} color="#2a5aff" />
+            <pointLight       position={[-1.9, 1.4, 1.2]} intensity={1.4} color="#7adcff" />
+          </>
+        ) : (
+          <>
+            <ambientLight intensity={0.42} />
+            <directionalLight position={[4.8, 6.2, 4.2]}  intensity={2.55} castShadow shadow-mapSize-width={2048} shadow-mapSize-height={2048} />
+            <directionalLight position={[-4.2, 3,  -3.6]} intensity={0.52} />
+            <pointLight       position={[-1.9, 1.4, 1.2]} intensity={0.8}  color="#9fe8ff" />
+            <Environment preset="warehouse" />
+          </>
+        )}
+
+        <group rotation={[0, -0.42, 0]} position={[0, -0.78, 0]}>
+          {bp ? (
+            <Grid
+              position={[0, -0.012, 0]}
+              cellSize={0.25}
+              cellThickness={0.6}
+              cellColor="#ffffff"
+              sectionSize={1}
+              sectionThickness={1.6}
+              sectionColor="#ffffff"
+              fadeDistance={14}
+              fadeStrength={2.2}
+              infiniteGrid
+            />
+          ) : (
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.012, 0]} receiveShadow>
+              <planeGeometry args={[8, 6]} />
+              <meshStandardMaterial color="#0d1011" roughness={0.86} metalness={0.08} />
+            </mesh>
+          )}
+          <HpMetalJetS100Model statuses={statuses} onDotClick={handleDotClick} />
+        </group>
+
+        {!bp && (
+          <ContactShadows position={[0, -0.79, 0]} opacity={0.46} blur={1.8} scale={5.5} far={4} />
+        )}
+
+        <CameraFocuser focusWorld={focusWorld} />
+
+        <OrbitControls
+          makeDefault
+          enablePan={false}
+          target={[0, 0.42, 0]}
+          minDistance={3.1}
+          maxDistance={7.2}
+          maxPolarAngle={1.42}
+        />
+      </Canvas>
+    </BlueprintCtx.Provider>
   );
 }
 
-export function MachineExperience() {
+export function MachineExperience({
+  statuses,
+  blueprintMode,
+  onDotClick,
+}: {
+  statuses?: ComponentStatuses;
+  blueprintMode?: boolean;
+  onDotClick?: DotClickHandler;
+}) {
   return (
-    <main className="h-screen min-h-screen overflow-hidden bg-[#050607]">
-      <ModelScene />
-    </main>
+    <div className="h-full w-full overflow-hidden" style={{ background: blueprintMode ? "#0048b8" : "#050607" }}>
+      <ModelScene statuses={statuses} blueprintMode={blueprintMode} onDotClick={onDotClick} />
+    </div>
   );
 }

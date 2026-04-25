@@ -72,7 +72,7 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
+  --radius: 0.5rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
@@ -83,38 +83,60 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
+/* ── Blueprint dark theme ──────────────────────────────────────────────────── */
+
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  /* Vivid cobalt-blue background — classic blueprint paper */
+  --background:          oklch(0.44 0.222 264);
+  --foreground:          oklch(0.97 0.006 240);
+
+  /* Card: slightly darker blue panel */
+  --card:                oklch(0.37 0.205 264);
+  --card-foreground:     oklch(0.97 0.006 240);
+
+  /* Popover */
+  --popover:             oklch(0.34 0.195 264);
+  --popover-foreground:  oklch(0.97 0.006 240);
+
+  /* Primary: white — the blueprint line colour */
+  --primary:             oklch(0.97 0.006 240);
+  --primary-foreground:  oklch(0.44 0.222 264);
+
+  /* Secondary: darker blue panel */
+  --secondary:           oklch(0.35 0.198 264);
+  --secondary-foreground:oklch(0.97 0.006 240);
+
+  /* Muted */
+  --muted:               oklch(0.36 0.200 264);
+  --muted-foreground:    oklch(0.78 0.030 240);
+
+  /* Accent */
+  --accent:              oklch(0.34 0.195 264);
+  --accent-foreground:   oklch(0.97 0.006 240);
+
+  /* Destructive stays red for alert visibility */
+  --destructive:         oklch(0.65 0.230 25);
+
+  /* Borders: white translucent lines */
+  --border:              oklch(1 0 0 / 0.24);
+  --input:               oklch(1 0 0 / 0.20);
+  --ring:                oklch(0.97 0.006 240);
+
+  /* Charts: keep accent palette legible on blue */
+  --chart-1:             oklch(0.97 0.006 240);
+  --chart-2:             oklch(0.85 0.08  190);
+  --chart-3:             oklch(0.70 0.14  190);
+  --chart-4:             oklch(0.55 0.18  200);
+  --chart-5:             oklch(0.40 0.20  210);
+
+  --sidebar:             oklch(0.36 0.200 264);
+  --sidebar-foreground:  oklch(0.97 0.006 240);
+  --sidebar-primary:     oklch(0.97 0.006 240);
+  --sidebar-primary-foreground: oklch(0.44 0.222 264);
+  --sidebar-accent:      oklch(0.32 0.188 264);
+  --sidebar-accent-foreground: oklch(0.97 0.006 240);
+  --sidebar-border:      oklch(1 0 0 / 0.24);
+  --sidebar-ring:        oklch(0.97 0.006 240);
 }
 
 @layer base {
@@ -127,4 +149,15 @@
   html {
     @apply font-sans;
   }
+}
+
+/* ── Blueprint grid overlay on body ───────────────────────────────────────── */
+
+.dark body {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.30) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.30) 1px, transparent 1px),
+    linear-gradient(rgba(255, 255, 255, 0.10) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.10) 1px, transparent 1px);
+  background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px;
 }

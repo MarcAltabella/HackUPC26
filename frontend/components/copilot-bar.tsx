@@ -33,6 +33,7 @@ interface CopilotBarProps {
   scenarioId?: string;
 }
 
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function severityVariant(s: "INFO" | "WARNING" | "CRITICAL") {
@@ -148,7 +149,7 @@ export function CopilotBar({ scenarioId = "baseline_nominal" }: CopilotBarProps)
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef   = useRef<HTMLDivElement>(null);
 
-  // Listen for "Ask co-pilot" events fired by AlertCard buttons
+  // Pre-fill textarea when an alert card fires a manual query
   useEffect(() => {
     function handleQuery(e: Event) {
       const query = (e as CustomEvent<string>).detail;
@@ -159,7 +160,7 @@ export function CopilotBar({ scenarioId = "baseline_nominal" }: CopilotBarProps)
     return () => window.removeEventListener("copilot-query", handleQuery);
   }, []);
 
-  // Scroll to bottom when new message arrives
+  // Scroll to bottom on new messages
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -200,7 +201,7 @@ export function CopilotBar({ scenarioId = "baseline_nominal" }: CopilotBarProps)
     }
   }
 
-  const hasContent = messages.length > 0 || error;
+  const hasContent = messages.length > 0 || !!error;
 
   return (
     <div className="border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
