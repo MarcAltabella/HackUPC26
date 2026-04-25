@@ -212,7 +212,7 @@ def train_classifier(
     model = DenseClassifier(cfg).to(device)
 
     weights_on_device = class_weights.to(device) if class_weights is not None else None
-    criterion = nn.CrossEntropyLoss(weight=weights_on_device, label_smoothing=0.05)
+    criterion = nn.CrossEntropyLoss(weight=weights_on_device, label_smoothing=0.01)
 
     optimizer = DenseTrainingBase.build_optimizer(
         model, OptimizerConfig(lr=cfg.lr, weight_decay=cfg.weight_decay)
@@ -252,7 +252,7 @@ def train_classifier(
             flush=True,
         )
 
-        if val_acc > best_val_acc or (val_acc == best_val_acc and val_loss < best_val_loss):
+        if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_val_acc = val_acc
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
