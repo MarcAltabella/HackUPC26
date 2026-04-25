@@ -185,3 +185,69 @@ shock (p=0.05):
 
 ---
 
+## Milestone 6 - RL training run
+
+- Timestamp: 2026-04-25T13:46:07.012000
+- Episodes: 12
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- Resume mode: False
+- Alpha: 0.1
+- Gamma: 0.99
+- Epsilon schedule: start=1.0, end=0.05
+- Q-table path: data\q_table.pkl
+- Mean episode reward: -1883.333
+- Mean survival steps: 1000.00
+- Failure rate: 0.000
+- Final epsilon: 0.129
+
+---
+
+## Milestone 6 - RL evaluation run
+
+- Timestamp: 2026-04-25T13:46:21.803228
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- Runs per scenario: 3
+- Baseline schedule: fixed_100
+- Q-table path: C:\Users\Marc\Desktop\Projects\Projects\HackUPC26\data\q_table.pkl
+- Summary path: C:\Users\Marc\Desktop\Projects\Projects\HackUPC26\data\rl_eval_summary.json
+- Runs path: C:\Users\Marc\Desktop\Projects\Projects\HackUPC26\data\rl_eval_runs.csv
+- Overall RL mean TTF: 1000.0
+- Overall baseline mean TTF: 1000.0
+- Overall RL survival rate: 1.0
+- Overall baseline survival rate: 1.0
+
+---
+
+## Milestone 6 - RL training run
+
+- Timestamp: 2026-04-25T13:46:56.309612
+- Episodes: 2
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- Resume mode: False
+- Alpha: 0.1
+- Gamma: 0.99
+- Epsilon schedule: start=1.0, end=0.05
+- Q-table path: C:\Users\Marc\Desktop\Projects\Projects\HackUPC26\data\q_table_smoke.pkl
+- Mean episode reward: -2835.000
+- Mean survival steps: 1000.00
+- Failure rate: 0.000
+- Final epsilon: 0.525
+
+---
+
+## Milestone 6 - RL evaluation run
+
+- Timestamp: 2026-04-25T13:46:56.647552
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- Runs per scenario: 1
+- Baseline schedule: fixed_100
+- Q-table path: C:\Users\Marc\Desktop\Projects\Projects\HackUPC26\data\q_table.pkl
+- Summary path: C:\Users\Marc\Desktop\Projects\Projects\HackUPC26\data\rl_eval_summary_smoke.json
+- Runs path: C:\Users\Marc\Desktop\Projects\Projects\HackUPC26\data\rl_eval_runs_smoke.csv
+- Overall RL mean TTF: 1000.0
+- Overall baseline mean TTF: 1000.0
+- Overall RL survival rate: 1.0
+- Overall baseline survival rate: 1.0
+
+---
+

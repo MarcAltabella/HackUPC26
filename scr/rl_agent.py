@@ -3,7 +3,7 @@ from __future__ import annotations
 import pickle
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -17,6 +17,7 @@ from .generate_dataset import (
     Historian,
     SimulationConfig,
     _SCENARIO_SEED,
+    _maintenance_level,
     sample_drivers,
     step_phase1,
 )
@@ -158,6 +159,13 @@ def action_to_maintenance_level(action: int) -> float:
     return ACTION_TO_MAINTENANCE_LEVEL[action]
 
 
+def maintenance_level_to_action(maintenance_level: float) -> int:
+    for action, level in ACTION_TO_MAINTENANCE_LEVEL.items():
+        if abs(level - maintenance_level) < 1e-9:
+            return action
+    raise ValueError(f"Unsupported maintenance level: {maintenance_level}")
+
+
 def is_terminal_state(state_report: dict[str, Any]) -> bool:
     return any(
         value == "FAILED"
@@ -224,6 +232,68 @@ def run_rl_episode(
     gamma: float = 0.99,
     historian: Historian | None = None,
 ) -> EpisodeResult:
+    def rl_policy(
+        _t: int,
+        state: tuple[int, int, int, int],
+        _state_report: dict[str, Any],
+        _steps_since_maint: int,
+        rng: np.random.Generator,
+    ) -> tuple[int, float]:
+        action = pick_action(q_table, state, epsilon, rng=rng)
+        return action, action_to_maintenance_level(action)
+
+    return _run_episode(
+        cfg,
+        run_id,
+        rl_policy,
+        q_table=q_table,
+        training=training,
+        alpha=alpha,
+        gamma=gamma,
+        historian=historian,
+    )
+
+
+def run_schedule_episode(
+    cfg: SimulationConfig,
+    run_id: int,
+    maintenance_schedule: str = "fixed_100",
+    *,
+    historian: Historian | None = None,
+) -> EpisodeResult:
+    def schedule_policy(
+        t: int,
+        _state: tuple[int, int, int, int],
+        _state_report: dict[str, Any],
+        _steps_since_maint: int,
+        _rng: np.random.Generator,
+    ) -> tuple[int, float]:
+        maintenance_level = _maintenance_level(maintenance_schedule, t)
+        action = maintenance_level_to_action(maintenance_level)
+        return action, maintenance_level
+
+    return _run_episode(
+        cfg,
+        run_id,
+        schedule_policy,
+        historian=historian,
+    )
+
+
+def _run_episode(
+    cfg: SimulationConfig,
+    run_id: int,
+    policy: Callable[
+        [int, tuple[int, int, int, int], dict[str, Any], int, np.random.Generator],
+        tuple[int, float],
+    ],
+    *,
+    q_table: np.ndarray | None = None,
+    training: bool = False,
+    alpha: float = 0.1,
+    gamma: float = 0.99,
+    historian: Historian | None = None,
+) -> EpisodeResult:
     seed = _SCENARIO_SEED[cfg.scenario_id] + run_id * 997
     rng = np.random.default_rng(seed)
 
@@ -236,8 +306,7 @@ def run_rl_episode(
 
     for t in range(cfg.total_steps):
         state = discretise(state_report, steps_since_maint)
-        action = pick_action(q_table, state, epsilon, rng=rng)
-        maintenance_level = action_to_maintenance_level(action)
+        action, maintenance_level = policy(t, state, state_report, steps_since_maint, rng)
         steps_since_maint = 0 if action > 0 else steps_since_maint + 1
 
         drivers = sample_drivers(t, cfg, rng)
@@ -249,6 +318,8 @@ def run_rl_episode(
         next_state = discretise(new_report, steps_since_maint)
 
         if training:
+            if q_table is None:
+                raise ValueError("Q-table is required when training=True")
             update_q(
                 q_table,
                 state,
@@ -299,8 +370,10 @@ __all__ = [
     "initial_state_report",
     "is_terminal_state",
     "load_q_table",
+    "maintenance_level_to_action",
     "pick_action",
     "run_rl_episode",
+    "run_schedule_episode",
     "save_q_table",
     "subsystem_healths",
     "update_q",

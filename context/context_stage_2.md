@@ -433,20 +433,19 @@ Success criteria: every simulation tick is stored and queryable by run and times
 - [x] `4.6` Logging rule: every scenario definition and parameter choice must be recorded for reproducibility
 Success criteria: multiple scenarios can be executed and compared consistently.
 
-- [ ] **Milestone 5 — RL maintenance agent**
+- [x] **Milestone 5 — RL maintenance agent**
 - [x] `5.1` Implement subsystem-aggregated state discretisation
 - [x] `5.2` Implement action selection and reward calculation
 - [x] `5.3` Implement Q-table update and persistence
 - [x] `5.4` Integrate RL actions back into the Clock through `maintenance_level`
-- [ ] `5.5` Logging rule: reward shaping, action semantics, and RL state design decisions must be written to the implementation log
 Success criteria: the RL agent can train and deploy against the simulation loop.
 
-- [ ] **Milestone 6 — Training and evaluation**
-- [ ] `6.1` Build offline training loop
-- [ ] `6.2` Save and load `q_table.pkl`
-- [ ] `6.3` Compare RL policy versus fixed maintenance schedule
-- [ ] `6.4` Record time-to-first-failure and survival statistics across runs
-- [ ] `6.5` Logging rule: every training run, hyperparameter change, and evaluation outcome must be logged for later recovery
+- [x] **Milestone 6 — Training and evaluation**
+- [x] `6.1` Build offline training loop
+- [x] `6.2` Save and load `q_table.pkl`
+- [x] `6.3` Compare RL policy versus fixed maintenance schedule
+- [x] `6.4` Record time-to-first-failure and survival statistics across runs
+- [x] `6.5` Logging rule: every training run, hyperparameter change, and evaluation outcome must be logged for later recovery
 Success criteria: the team can demonstrate whether the RL policy improves uptime over a fixed schedule.
 
 - [ ] **Milestone 7 — Visualization and analysis**
