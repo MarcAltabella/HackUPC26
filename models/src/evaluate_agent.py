@@ -9,10 +9,11 @@ from datetime import datetime
 from pathlib import Path
 
 from .generate_dataset import PROJECT_ROOT, SCENARIOS, SimulationConfig
-from .rl_agent import load_q_table, run_rl_episode, run_schedule_episode
+from .rl_agent import load_dqn, load_q_table, run_dqn_episode, run_rl_episode, run_schedule_episode
 
 
 DEFAULT_Q_TABLE_PATH = PROJECT_ROOT / "data" / "q_table.pkl"
+DEFAULT_DQN_PATH = PROJECT_ROOT / "data" / "dqn.pt"
 DEFAULT_LOG_PATH = PROJECT_ROOT / "logs" / "implementation_log.md"
 DEFAULT_SUMMARY_PATH = PROJECT_ROOT / "data" / "rl_eval_summary.json"
 DEFAULT_RUNS_PATH = PROJECT_ROOT / "data" / "rl_eval_runs.csv"
@@ -65,6 +66,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_LOG_PATH,
         help="Implementation log file.",
+    )
+    parser.add_argument(
+        "--dqn-path",
+        type=Path,
+        default=None,
+        help="Path to a trained DQN model. When provided, DQN is evaluated alongside the Q-table.",
     )
     return parser.parse_args()
 
@@ -131,7 +138,9 @@ def main() -> None:
     args.runs_path = resolve_project_path(args.runs_path)
     args.log_path = resolve_project_path(args.log_path)
     q_table = load_q_table(args.q_table_path)
+    dqn = load_dqn(args.dqn_path) if (args.dqn_path is not None and args.dqn_path.exists()) else None
     scenarios = select_scenarios(args.scenarios)
+    policies = ["rl", "baseline"] + (["dqn"] if dqn is not None else [])
 
     rows: list[EvaluationRow] = []
 
@@ -165,12 +174,24 @@ def main() -> None:
                 )
             )
 
+            if dqn is not None:
+                dqn_result = run_dqn_episode(cfg, run_id=run_id, policy_net=dqn, training=False, epsilon=0.0)
+                rows.append(
+                    EvaluationRow(
+                        policy="dqn",
+                        scenario_id=cfg.scenario_id,
+                        run_id=run_id,
+                        steps_survived=dqn_result.steps_survived,
+                        failed=dqn_result.failed,
+                        total_reward=round(dqn_result.total_reward, 6),
+                    )
+                )
+
     per_scenario: dict[str, dict[str, dict[str, float]]] = {}
     for cfg in scenarios:
         scenario_rows = [row for row in rows if row.scenario_id == cfg.scenario_id]
         per_scenario[cfg.scenario_id] = {
-            "rl": summarize_rows([row for row in scenario_rows if row.policy == "rl"]),
-            "baseline": summarize_rows([row for row in scenario_rows if row.policy == "baseline"]),
+            p: summarize_rows([row for row in scenario_rows if row.policy == p]) for p in policies
         }
 
     summary = {
@@ -179,8 +200,7 @@ def main() -> None:
         "runs_per_scenario": args.runs,
         "scenarios": args.scenarios,
         "overall": {
-            "rl": summarize_rows([row for row in rows if row.policy == "rl"]),
-            "baseline": summarize_rows([row for row in rows if row.policy == "baseline"]),
+            p: summarize_rows([row for row in rows if row.policy == p]) for p in policies
         },
         "per_scenario": per_scenario,
     }
