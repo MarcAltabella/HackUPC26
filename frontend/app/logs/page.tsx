@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { MOCK_HISTORY } from "@/lib/mock-data";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -75,10 +76,11 @@ interface Filters {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function LogsPage() {
-  const [rows,    setRows]    = useState<HistoryRow[]>([]);
+  const [rows,    setRows]    = useState<HistoryRow[]>(MOCK_HISTORY);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
   const [page,    setPage]    = useState(0);
+  const [isDemo,  setIsDemo]  = useState(true);
 
   const [filters, setFilters] = useState<Filters>({
     scenario:     SCENARIO,
@@ -116,10 +118,10 @@ export default function LogsPage() {
         return r.json();
       })
       .then((data: HistoryRow[]) => {
-        if (!ctrl.signal.aborted) setRows(data);
+        if (!ctrl.signal.aborted) { setRows(data); setIsDemo(false); setError(null); }
       })
       .catch(e => {
-        if (e.name !== "AbortError") setError("Backend unreachable — start the FastAPI server on :8000.");
+        if (e.name !== "AbortError") { setRows(MOCK_HISTORY); setIsDemo(true); }
       })
       .finally(() => {
         if (!ctrl.signal.aborted) setLoading(false);
@@ -210,7 +212,16 @@ export default function LogsPage() {
         </span>
       </div>
 
-      {/* Error */}
+      {/* Demo / error banner */}
+      {isDemo && !error && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/40 border-b border-border px-4 py-2 shrink-0">
+          <span className="h-1.5 w-1.5 rounded-full bg-yellow-400 shrink-0" />
+          <span>
+            <span className="font-semibold text-foreground">Demo mode</span> — showing synthetic data.
+            Start the backend (<code className="font-mono">uvicorn api:app --reload --port 8000</code>) to switch to live data.
+          </span>
+        </div>
+      )}
       {error && (
         <p className="text-xs text-destructive px-4 py-2 bg-destructive/10 shrink-0">{error}</p>
       )}

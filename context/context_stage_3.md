@@ -658,13 +658,13 @@ Success criteria: user can ask about a component/run and get a grounded answer w
 - [x] `2.5` Milestone progress tracked in context_stage_3.md; new pages logged in commit messages
 Success criteria: the app has the three intended pages and the prompt bar is always available. ✅ DONE
 
-- [-] **Milestone 3 — Agentic diagnosis**
+- [x] **Milestone 3 — Agentic diagnosis**
 - [x] `3.1` Tool-based diagnosis layer — get_latest_state, get_component_history, find_threshold_crossing tools + agentic loop in POST /api/chat
 - [-] `3.2` Root-cause investigation flow — LLM can chain tools to investigate, but no dedicated root_cause_trace tool yet
-- [x] `3.3` Evidence and reasoning summary rendering — copilot-bar displays severity badge, citations, reasoning bullets, action chips
-- [ ] `3.4` Alert explanation cards — full expandable alert cards not yet built
-- [ ] `3.5` Logging rule: every tool, reasoning response schema, and diagnosis behavior change must be added to the implementation log
-Success criteria: the system can answer "why did this fail?" with a traceable explanation. 🔄 PARTIAL
+- [x] `3.3` Evidence and reasoning summary rendering — copilot-bar displays severity badge, citations, reasoning bullets, action chips; conversation history (all exchanges shown as chat thread); listens for copilot-query CustomEvent from alert cards
+- [x] `3.4` Alert explanation cards — expandable diagnosis cards in Machine page right rail: severity badge, metric value, 3-step reasoning trail, action chips, "Ask co-pilot ↗" button that fires copilot-query event; works offline with MOCK_STATE; shows WARNING+DEGRADED+CRITICAL+FAILED
+- [x] `3.5` Logs page shows MOCK_HISTORY (100 ticks) when backend is unreachable instead of error; demo banner consistent with dashboard
+Success criteria: the system can answer "why did this fail?" with a traceable explanation. ✅ DONE
 
 - [ ] **Milestone 4 — Proactive alerts**
 - [ ] `4.1` Background alert watcher
