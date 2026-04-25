@@ -6,7 +6,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { MachineExperience, type CompStatus, type ComponentStatuses } from "./machine-experience";
-import { MOCK_HISTORY, type MachineState } from "@/lib/mock-data";
+import { getTimeline } from "@/lib/api";
+import type { DiagnosticAlert, MachineState as ApiMachineState } from "@/lib/api-types";
 
 // ── Agent activity state ───────────────────────────────────────────────────────
 
@@ -23,7 +24,7 @@ const LOOP_PAUSE    = 1500;
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface RichAlert {
-  id: number;
+  id: number | string;
   severity: "CRITICAL" | "WARNING";
   subsystem: string;
   component: string;
@@ -33,8 +34,6 @@ interface RichAlert {
   actions: string[];
   query: string;
 }
-
-type Boosts = { recoating: number; printhead: number; thermal: number };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -55,47 +54,7 @@ function badgeVariant(s: "CRITICAL" | "WARNING") {
   return s === "CRITICAL" ? "destructive" as const : "outline" as const;
 }
 
-function toStatus(h: number): string {
-  if (h > 0.85) return "FUNCTIONAL";
-  if (h > 0.70) return "NOMINAL";
-  if (h > 0.50) return "WARNING";
-  if (h > 0.25) return "DEGRADED";
-  if (h > 0.10) return "CRITICAL";
-  return "FAILED";
-}
-
-function deriveAnimState(tick: number, boosts: Boosts): MachineState {
-  const row = MOCK_HISTORY[tick];
-  const hr  = Math.min(1, row.health_recoating + boosts.recoating);
-  const hp  = Math.min(1, row.health_printhead + boosts.printhead);
-  const ht  = Math.min(1, row.health_thermal   + boosts.thermal);
-
-  return {
-    scenario_id: "humid_factory",
-    run_number:  0,
-    t:           tick,
-    recoating: {
-      subsystem_health: hr,
-      blade:  { health: Math.min(1, hr + 0.04), status: toStatus(Math.min(1, hr + 0.04)), thickness_mm: 0.41 },
-      motor:  { health: Math.min(1, hr + 0.18), status: toStatus(Math.min(1, hr + 0.18)), vibration_mm_s: 3.7 },
-      rail:   { health: Math.max(0, hr - 0.06), status: toStatus(Math.max(0, hr - 0.06)), deviation_um: 142 },
-    },
-    printhead: {
-      subsystem_health: hp,
-      nozzle:   { health: Math.max(0, hp - 0.04), status: toStatus(Math.max(0, hp - 0.04)), clog_probability: 0.61 },
-      resistor: { health: Math.min(1, hp + 0.12), status: toStatus(Math.min(1, hp + 0.12)), drift_pct: 4.2 },
-      cleaning: { health: Math.min(1, hp + 0.02), status: toStatus(Math.min(1, hp + 0.02)), efficiency: 0.54 },
-    },
-    thermal: {
-      subsystem_health: ht,
-      heater:     { health: Math.min(1, ht + 0.06), status: toStatus(Math.min(1, ht + 0.06)), resistance_ohm: 12.4 },
-      sensor:     { health: Math.min(1, ht + 0.02), status: toStatus(Math.min(1, ht + 0.02)), measurement_error_c: 0.8 },
-      insulation: { health: Math.max(0, ht - 0.03), status: toStatus(Math.max(0, ht - 0.03)), thermal_resistance: 1.82 },
-    },
-  };
-}
-
-function toCompStatuses(s: MachineState): ComponentStatuses {
+function toCompStatuses(s: ApiMachineState): ComponentStatuses {
   return {
     blade:      s.recoating.blade.status    as CompStatus,
     motor:      s.recoating.motor.status    as CompStatus,
@@ -109,7 +68,7 @@ function toCompStatuses(s: MachineState): ComponentStatuses {
   };
 }
 
-function deriveAlerts(state: MachineState): RichAlert[] {
+function deriveAlerts(state: ApiMachineState): RichAlert[] {
   const alerts: RichAlert[] = [];
   let id = 1;
 
@@ -252,6 +211,20 @@ function deriveAlerts(state: MachineState): RichAlert[] {
   return alerts.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "CRITICAL" ? -1 : 1));
 }
 
+function fromBackendAlert(alert: DiagnosticAlert): RichAlert {
+  return {
+    id: alert.id,
+    severity: alert.severity,
+    subsystem: alert.subsystem,
+    component: alert.component === "Resistor" ? "Resistors" : alert.component,
+    metric: alert.metric,
+    summary: alert.summary,
+    reasoning: alert.reasoning,
+    actions: alert.actions,
+    query: alert.query,
+  };
+}
+
 // ── Alert Card ────────────────────────────────────────────────────────────────
 
 function AlertCard({
@@ -269,9 +242,8 @@ function AlertCard({
   // Auto-expand and scroll into view when this alert is activated by a dot click
   useEffect(() => {
     if (!isActive) return;
-    setOpen(true);
-    // Give React a tick to expand the card before scrolling
     requestAnimationFrame(() => {
+      setOpen(true);
       cardRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
   }, [isActive]);
@@ -350,37 +322,70 @@ function AlertCard({
 
 export default function MachinePage() {
   const [animTick,      setAnimTick]      = useState(0);
-  const [boosts,        setBoosts]        = useState<Boosts>({ recoating: 0, printhead: 0, thermal: 0 });
+  const [timeline,      setTimeline]      = useState<ApiMachineState[]>([]);
+  const [loading,       setLoading]       = useState(true);
+  const [error,         setError]         = useState<string | null>(null);
+  const isDemo = false;
   const [agentStatus,   setAgentStatus]   = useState<AgentStatus | null>(null);
   const [blueprintView, setBlueprintView] = useState(false);
   const [activeAlertComp, setActiveAlertComp] = useState<string | null>(null);
   const triggeredRef  = useRef<Set<string>>(new Set());
   const agentTimers   = useRef<ReturnType<typeof setTimeout>[]>([]);
 
+  useEffect(() => {
+    const ctrl = new AbortController();
+    getTimeline("humid_factory", 0, 0, 999, ctrl.signal)
+      .then(rows => {
+        if (rows.length === 0) throw new Error("API returned no timeline rows");
+        setTimeline(rows);
+        setError(null);
+        setAnimTick(0);
+      })
+      .catch((err: Error) => {
+        setTimeline([]);
+        if (!ctrl.signal.aborted) setError(err.message);
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setLoading(false);
+      });
+    return () => ctrl.abort();
+  }, []);
+
   // Animation loop
   useEffect(() => {
-    if (animTick >= 99) {
+    if (timeline.length === 0) return;
+    const maxTick = timeline.length - 1;
+    if (animTick >= maxTick) {
       const id = setTimeout(() => {
         triggeredRef.current.clear();
-        setBoosts({ recoating: 0, printhead: 0, thermal: 0 });
         setAnimTick(0);
       }, LOOP_PAUSE);
       return () => clearTimeout(id);
     }
     const id = setTimeout(() => setAnimTick(t => t + 1), TICK_INTERVAL);
     return () => clearTimeout(id);
-  }, [animTick]);
+  }, [animTick, timeline.length]);
 
   // Threshold crossing detection
   useEffect(() => {
     if (animTick === 0) return;
-    const prev = MOCK_HISTORY[animTick - 1];
-    const curr = MOCK_HISTORY[animTick];
+    const prevApi = timeline[animTick - 1];
+    const currApi = timeline[animTick];
+    if (!prevApi || !currApi) return;
+    const prev = {
+      health_recoating: prevApi.recoating.subsystem_health,
+      health_printhead: prevApi.printhead.subsystem_health,
+      health_thermal: prevApi.thermal.subsystem_health,
+    };
+    const curr = {
+      health_recoating: currApi.recoating.subsystem_health,
+      health_printhead: currApi.printhead.subsystem_health,
+      health_thermal: currApi.thermal.subsystem_health,
+    };
 
     function check(
       key:       string,
       field:     "health_recoating" | "health_printhead" | "health_thermal",
-      sub:       keyof Boosts,
       threshold: number,
     ) {
       if ((prev[field] as number) > threshold &&
@@ -388,16 +393,13 @@ export default function MachinePage() {
           !triggeredRef.current.has(key)) {
         triggeredRef.current.add(key);
         window.dispatchEvent(new CustomEvent("copilot-proactive", { detail: key }));
-        setTimeout(() => {
-          setBoosts(b => ({ ...b, [sub]: Math.min(0.4, b[sub] + 0.25) }));
-        }, 4000);
       }
     }
 
-    check("recoating-WARNING",  "health_recoating", "recoating", 0.50);
-    check("printhead-WARNING",  "health_printhead", "printhead", 0.50);
-    check("recoating-CRITICAL", "health_recoating", "recoating", 0.25);
-  }, [animTick]);
+    check("recoating-WARNING",  "health_recoating", 0.50);
+    check("printhead-WARNING",  "health_printhead", 0.50);
+    check("recoating-CRITICAL", "health_recoating", 0.25);
+  }, [animTick, timeline]);
 
   // Agent activity banner on proactive events
   useEffect(() => {
@@ -429,8 +431,34 @@ export default function MachinePage() {
     setActiveAlertComp(prev => prev === compName ? null : compName); // toggle
   }
 
-  const animState = deriveAnimState(animTick, boosts);
-  const alerts    = deriveAlerts(animState);
+  if (loading || error || timeline.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center bg-background p-6">
+        <Card className="max-w-md w-full">
+          <CardHeader>
+            <CardTitle className="text-sm">
+              {loading ? "Loading live telemetry" : "Live telemetry unavailable"}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-xs text-muted-foreground">
+            <p>
+              {loading
+                ? "Requesting /api/runs/humid_factory/timeline from the backend."
+                : error ?? "The backend returned no rows for this run."}
+            </p>
+            {!loading && (
+              <p className="font-mono text-[11px]">
+                No synthetic fallback is rendered on this screen.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const animState = timeline[animTick] ?? timeline[timeline.length - 1];
+  const alerts    = animState.alerts.map(fromBackendAlert);
   const statuses  = toCompStatuses(animState);
 
   const subsystems = [
@@ -467,8 +495,8 @@ export default function MachinePage() {
 
         {/* Dot-click hint */}
         <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-xs font-mono text-muted-foreground bg-background/70 rounded px-2 py-1 pointer-events-none">
-          humid_factory · t = {animTick}
-          <span className="ml-2 text-yellow-400">· demo</span>
+          {animState.scenario_id} · t = {animTick}
+          {isDemo && <span className="ml-2 text-yellow-400">· demo</span>}
           <span className="ml-2 opacity-50">· click dots to inspect</span>
         </div>
       </div>
@@ -504,6 +532,21 @@ export default function MachinePage() {
             </CardTitle>
           </CardHeader>
           <Separator />
+
+          {"maintenance_recommendation" in animState && (
+            <div className="shrink-0 flex items-center gap-2.5 px-4 py-2 border-b bg-blue-950/20 border-blue-500/20">
+              <span className="h-1.5 w-1.5 rounded-full shrink-0 bg-blue-400" />
+              <div className="flex-1 min-w-0">
+                <span className="text-[10px] font-semibold uppercase tracking-widest mr-2 text-muted-foreground">
+                  DQN Policy
+                </span>
+                <span className="text-[11px] text-foreground">
+                  {animState.maintenance_recommendation.action_label.replaceAll("_", " ")}
+                  {" "}· reward {animState.maintenance_recommendation.reward.toFixed(2)}
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Agent activity — inline banner */}
           {agentStatus && (

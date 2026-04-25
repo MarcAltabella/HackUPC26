@@ -77,7 +77,7 @@ function hotspotWorldPos(key: DotKey): THREE.Vector3 {
 // ── Camera focuser — lerps OrbitControls target toward focusWorld ─────────────
 
 function CameraFocuser({ focusWorld }: { focusWorld: THREE.Vector3 | null }) {
-  const controls  = useThree(s => s.controls) as any;
+  const controls  = useThree(s => s.controls) as unknown as { target: THREE.Vector3; update: () => void } | undefined;
   const targetRef = useRef<THREE.Vector3 | null>(null);
 
   useEffect(() => {

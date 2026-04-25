@@ -5,24 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { askCopilot } from "@/lib/api";
+import type { ChatResponse } from "@/lib/api-types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-interface Citation {
-  run_id: string;
-  t: number;
-  field: string;
-  value?: number | string | null;
-}
-
-interface ChatResponse {
-  severity: "INFO" | "WARNING" | "CRITICAL";
-  summary: string;
-  answer: string;
-  reasoning_summary: string[];
-  citations: Citation[];
-  recommended_actions: string[];
-}
 
 interface Message {
   question: string;
@@ -31,6 +17,7 @@ interface Message {
 
 interface CopilotBarProps {
   scenarioId?: string;
+  runNumber?: number;
 }
 
 
@@ -141,7 +128,7 @@ function MessageCard({ msg }: { msg: Message }) {
 
 // ── CopilotBar ────────────────────────────────────────────────────────────────
 
-export function CopilotBar({ scenarioId = "baseline_nominal" }: CopilotBarProps) {
+export function CopilotBar({ scenarioId = "humid_factory", runNumber = 0 }: CopilotBarProps) {
   const [value,    setValue]    = useState("");
   const [loading,  setLoading]  = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -174,19 +161,8 @@ export function CopilotBar({ scenarioId = "baseline_nominal" }: CopilotBarProps)
     setValue("");
 
     try {
-      const res = await fetch("http://localhost:8000/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: q, scenario_id: scenarioId, run_number: 0 }),
-      });
-
-      if (res.ok) {
-        const data: ChatResponse = await res.json();
-        setMessages(prev => [...prev, { question: q, response: data }]);
-      } else {
-        const text = await res.text();
-        setError(`API error ${res.status}: ${text}`);
-      }
+      const data = await askCopilot({ message: q, scenarioId, runNumber });
+      setMessages(prev => [...prev, { question: q, response: data }]);
     } catch {
       setError("Could not reach the backend — start the FastAPI server on :8000.");
     } finally {

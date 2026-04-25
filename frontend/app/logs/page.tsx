@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 
-import { MOCK_HISTORY } from "@/lib/mock-data";
+import { getHistory } from "@/lib/api";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -17,6 +17,15 @@ interface HistoryRow {
   status_blade: string;
   status_nozzle: string;
   status_heater: string;
+  health_blade?: number;
+  health_motor?: number;
+  health_rail?: number;
+  health_nozzle?: number;
+  health_resistor?: number;
+  health_cleaning?: number;
+  health_heater?: number;
+  health_sensor?: number;
+  health_insulation?: number;
 }
 
 // Per-component health offsets from subsystem base
@@ -35,6 +44,9 @@ const COMP_OFFSETS = {
 type CompKey = keyof typeof COMP_OFFSETS;
 
 function compHealth(row: HistoryRow, comp: CompKey): number {
+  const backendKey = `health_${comp === "resistors" ? "resistor" : comp}` as keyof HistoryRow;
+  const backendValue = row[backendKey];
+  if (typeof backendValue === "number") return Math.max(0, Math.min(1, backendValue));
   const { sub, d } = COMP_OFFSETS[comp];
   return Math.max(0, Math.min(1, row[sub] + d));
 }
@@ -45,7 +57,6 @@ function allCompHealths(row: HistoryRow): number[] {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const API_BASE  = "http://localhost:8000";
 const SCENARIO  = "baseline_nominal";
 const PAGE_SIZE = 50;
 
@@ -99,11 +110,11 @@ const inputCls =
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function LogsPage() {
-  const [rows,    setRows]    = useState<HistoryRow[]>(MOCK_HISTORY);
+  const [rows,    setRows]    = useState<HistoryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
   const [page,    setPage]    = useState(0);
-  const [isDemo,  setIsDemo]  = useState(true);
+  const isDemo = false;
 
   const [filters, setFilters] = useState<Filters>({
     scenario:     SCENARIO,
@@ -126,23 +137,22 @@ export default function LogsPage() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
-    setLoading(true);
-    setError(null);
+    queueMicrotask(() => {
+      if (!ctrl.signal.aborted) {
+        setLoading(true);
+        setError(null);
+      }
+    });
 
-    fetch(
-      `${API_BASE}/api/runs/${filters.scenario}/history` +
-      `?run_number=${filters.runNumber}&start_t=${filters.startT}&end_t=${filters.endT}`,
-      { signal: ctrl.signal }
-    )
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
+    getHistory(filters.scenario, filters.runNumber, filters.startT, filters.endT, ctrl.signal)
       .then((data: HistoryRow[]) => {
-        if (!ctrl.signal.aborted) { setRows(data); setIsDemo(false); setError(null); }
+        if (!ctrl.signal.aborted) { setRows(data); setError(null); }
       })
-      .catch(e => {
-        if (e.name !== "AbortError") { setRows(MOCK_HISTORY); setIsDemo(true); }
+      .catch((e: Error) => {
+        if (e.name !== "AbortError") {
+          setRows([]);
+          setError(e.message);
+        }
       })
       .finally(() => {
         if (!ctrl.signal.aborted) setLoading(false);

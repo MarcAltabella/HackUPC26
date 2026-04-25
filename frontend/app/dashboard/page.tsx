@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { MOCK_STATE, MOCK_HISTORY, type MachineState, type HistoryRow } from "@/lib/mock-data";
+import { getHistory, getLatestState } from "@/lib/api";
+import type { HistoryRow, MachineState } from "@/lib/api-types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const API_BASE = "http://localhost:8000";
 const SCENARIO  = "baseline_nominal";
 const SPEED     = 3; // ticks per second
 
@@ -39,17 +39,31 @@ function segColor(h: number): string {
 
 const clamp = (v: number) => Math.max(0, Math.min(1, v));
 
+function componentHealth(row: HistoryRow, component: string): number {
+  const direct = row[`health_${component}` as keyof HistoryRow];
+  if (typeof direct === "number") return clamp(direct);
+  if (component === "blade") return clamp(row.health_recoating + 0.04);
+  if (component === "motor") return clamp(row.health_recoating + 0.18);
+  if (component === "rail") return clamp(row.health_recoating - 0.06);
+  if (component === "nozzle") return clamp(row.health_printhead - 0.04);
+  if (component === "resistor") return clamp(row.health_printhead + 0.12);
+  if (component === "cleaning") return clamp(row.health_printhead + 0.02);
+  if (component === "heater") return clamp(row.health_thermal + 0.06);
+  if (component === "sensor") return clamp(row.health_thermal + 0.02);
+  return clamp(row.health_thermal - 0.03);
+}
+
 function getKpisFromRow(row: HistoryRow) {
   const healths = [
-    clamp(row.health_recoating + 0.04),
-    clamp(row.health_recoating + 0.18),
-    clamp(row.health_recoating - 0.06),
-    clamp(row.health_printhead - 0.04),
-    clamp(row.health_printhead + 0.12),
-    clamp(row.health_printhead + 0.02),
-    clamp(row.health_thermal + 0.06),
-    clamp(row.health_thermal + 0.02),
-    clamp(row.health_thermal - 0.03),
+    componentHealth(row, "blade"),
+    componentHealth(row, "motor"),
+    componentHealth(row, "rail"),
+    componentHealth(row, "nozzle"),
+    componentHealth(row, "resistor"),
+    componentHealth(row, "cleaning"),
+    componentHealth(row, "heater"),
+    componentHealth(row, "sensor"),
+    componentHealth(row, "insulation"),
   ];
   const statuses = healths.map(toStatus);
   return {
@@ -132,7 +146,7 @@ function KpiStrip({ animTick, critical, warning, avgHealth, scenarioId, runNumbe
     {
       label: "Simulation",
       value: String(Math.floor(animTick)).padStart(3, "0"),
-      sub:   scenarioId,
+      sub:   `${scenarioId} · run ${runNumber}`,
       color: "rgba(228,234,246,0.92)",
     },
   ];
@@ -265,24 +279,37 @@ function DegradationRow({ label, fullData, animTick, currentHealth }: {
   animTick: number;   // float
   currentHealth: number;
 }) {
-  const floor = Math.floor(animTick);
-  const frac  = animTick - floor;
+  const maxSegments = 140;
+  const bucketSize = Math.max(1, Math.ceil(fullData.length / maxSegments));
+  const segments = [];
+
+  for (let start = 0; start < fullData.length; start += bucketSize) {
+    const values = fullData.slice(start, start + bucketSize);
+    segments.push({
+      start,
+      end: Math.min(start + bucketSize - 1, fullData.length - 1),
+      health: Math.min(...values),
+    });
+  }
 
   return (
     <div className="flex items-center gap-2 text-[10px]">
       <span className="text-muted-foreground font-mono w-[72px] shrink-0 text-right tracking-wide">{label}</span>
-      <div className="flex-1 flex gap-[1.5px] h-[14px] overflow-hidden" style={{ minWidth: 0 }}>
-        {fullData.map((h, i) => (
+      <div className="flex-1 grid h-[14px] overflow-hidden gap-px" style={{ minWidth: 0, gridTemplateColumns: `repeat(${segments.length}, minmax(2px, 1fr))` }}>
+        {segments.map(({ start, end, health }) => {
+          const visible = start <= animTick;
+          const active = start <= animTick && animTick <= end;
+          const progress = active ? Math.max(0.35, (animTick - start + 1) / Math.max(1, end - start + 1)) : 1;
+          return (
           <div
-            key={i}
-            className="flex-1 h-full"
+            key={start}
+            className="h-full"
             style={{
-              background: i <= floor ? segColor(h) : "rgba(228,234,246,0.08)",
-              opacity:    i === floor ? frac : 1,
-              minWidth:   0,
+              background: visible ? segColor(health) : "rgba(228,234,246,0.08)",
+              opacity: visible ? progress : 1,
             }}
           />
-        ))}
+        )})}
       </div>
       <span
         className="w-10 shrink-0 font-mono text-right text-[10px] tabular-nums"
@@ -297,9 +324,11 @@ function DegradationRow({ label, fullData, animTick, currentHealth }: {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const [state,    setState]    = useState<MachineState>(MOCK_STATE);
-  const [history,  setHistory]  = useState<HistoryRow[]>(MOCK_HISTORY);
-  const [isDemo,   setIsDemo]   = useState(true);
+  const [state,    setState]    = useState<MachineState | null>(null);
+  const [history,  setHistory]  = useState<HistoryRow[]>([]);
+  const [loading,  setLoading]  = useState(true);
+  const [error,    setError]    = useState<string | null>(null);
+  const isDemo = false;
   const [animTick, setAnimTick] = useState(0); // float
 
   // Mutable refs for the RAF loop — avoids closure-stale issues
@@ -314,12 +343,10 @@ export default function DashboardPage() {
     let alive = true;
     async function fetchState() {
       try {
-        const res = await fetch(`${API_BASE}/api/runs/${SCENARIO}/state/latest`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const d: MachineState = await res.json();
-        if (alive) { setState(d); setIsDemo(false); }
-      } catch {
-        if (alive) { setState(MOCK_STATE); setIsDemo(true); }
+        const d = await getLatestState(SCENARIO);
+        if (alive) setState(d);
+      } catch (err) {
+        if (alive) setError(err instanceof Error ? err.message : "Failed to load latest state");
       }
     }
     fetchState();
@@ -329,10 +356,24 @@ export default function DashboardPage() {
 
   // History fetch
   useEffect(() => {
-    fetch(`${API_BASE}/api/runs/${SCENARIO}/history?start_t=0&end_t=999`)
-      .then(r => r.ok ? r.json() : Promise.reject())
-      .then((rows: HistoryRow[]) => { setHistory(rows); setIsDemo(false); })
-      .catch(() => setHistory(MOCK_HISTORY));
+    const ctrl = new AbortController();
+    setLoading(true);
+    getHistory(SCENARIO, 0, 0, 999, ctrl.signal)
+      .then((rows) => {
+        if (rows.length === 0) throw new Error("API returned no history rows");
+        setHistory(rows);
+        setError(null);
+      })
+      .catch((err: Error) => {
+        if (!ctrl.signal.aborted) {
+          setHistory([]);
+          setError(err.message);
+        }
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setLoading(false);
+      });
+    return () => ctrl.abort();
   }, []);
 
   // RAF animation loop — smooth fractional tick
@@ -343,7 +384,7 @@ export default function DashboardPage() {
     animTimeRef.current = 0;
     pausedRef.current   = false;
     lastTimeRef.current = null;
-    setAnimTick(0);
+    requestAnimationFrame(() => setAnimTick(0));
 
     function frame(now: number) {
       const dt = lastTimeRef.current === null ? 0 : (now - lastTimeRef.current) / 1000;
@@ -377,7 +418,49 @@ export default function DashboardPage() {
 
   // ── Derived values ──────────────────────────────────────────────────────────
 
-  const totalTicks = history.length || 1;
+  const tempFull  = useMemo(() => history.map(r => r.temperature),   [history]);
+  const humidFull = useMemo(() => history.map(r => r.humidity * 100), [history]);
+
+  const groups = useMemo(() => [
+    {
+      label: "Recoating",
+      rows: [
+        { name: "Blade",   full: history.map(r => componentHealth(r, "blade")) },
+        { name: "Motor",   full: history.map(r => componentHealth(r, "motor")) },
+        { name: "Rail",    full: history.map(r => componentHealth(r, "rail")) },
+      ],
+    },
+    {
+      label: "Printhead",
+      rows: [
+        { name: "Nozzle",    full: history.map(r => componentHealth(r, "nozzle")) },
+        { name: "Resistors", full: history.map(r => componentHealth(r, "resistor")) },
+        { name: "Cleaning",  full: history.map(r => componentHealth(r, "cleaning")) },
+      ],
+    },
+    {
+      label: "Thermal",
+      rows: [
+        { name: "Heater",     full: history.map(r => componentHealth(r, "heater")) },
+        { name: "Sensor",     full: history.map(r => componentHealth(r, "sensor")) },
+        { name: "Insulation", full: history.map(r => componentHealth(r, "insulation")) },
+      ],
+    },
+  ], [history]);
+
+  if (loading || error || history.length === 0 || state === null) {
+    return (
+      <ScrollArea className="h-full">
+        <div className="p-4 max-w-6xl mx-auto">
+          <div className="border border-border bg-card px-4 py-3 font-mono text-xs text-muted-foreground">
+            {loading ? "LOADING LIVE TELEMETRY" : error ?? "NO LIVE HISTORY ROWS RETURNED"}
+          </div>
+        </div>
+      </ScrollArea>
+    );
+  }
+
+  const totalTicks = history.length;
 
   const floor = Math.min(Math.floor(animTick), history.length - 1);
   const frac  = animTick - Math.floor(animTick);
@@ -388,48 +471,14 @@ export default function DashboardPage() {
   const { critical, warning, avgHealth } = getKpisFromRow(currentRow);
 
   // Pre-computed full series for charts (stable references — recomputed only when history changes)
-  const tempFull  = useMemo(() => history.map(r => r.temperature),   [history]);
-  const humidFull = useMemo(() => history.map(r => r.humidity * 100), [history]);
-
-  const allTemps = useMemo(() => MOCK_HISTORY.map(r => r.temperature), []);
-  const tempMin  = Math.floor(Math.min(...allTemps) - 1);
-  const tempMax  = Math.ceil(Math.max(...allTemps)  + 1);
-
-  const groups = useMemo(() => [
-    {
-      label: "Recoating",
-      rows: [
-        { name: "Blade",   full: history.map(r => clamp(r.health_recoating + 0.04)) },
-        { name: "Motor",   full: history.map(r => clamp(r.health_recoating + 0.18)) },
-        { name: "Rail",    full: history.map(r => clamp(r.health_recoating - 0.06)) },
-      ],
-    },
-    {
-      label: "Printhead",
-      rows: [
-        { name: "Nozzle",    full: history.map(r => clamp(r.health_printhead - 0.04)) },
-        { name: "Resistors", full: history.map(r => clamp(r.health_printhead + 0.12)) },
-        { name: "Cleaning",  full: history.map(r => clamp(r.health_printhead + 0.02)) },
-      ],
-    },
-    {
-      label: "Thermal",
-      rows: [
-        { name: "Heater",     full: history.map(r => clamp(r.health_thermal + 0.06)) },
-        { name: "Sensor",     full: history.map(r => clamp(r.health_thermal + 0.02)) },
-        { name: "Insulation", full: history.map(r => clamp(r.health_thermal - 0.03)) },
-      ],
-    },
-  ], [history]);
+  const tempMin  = Math.floor(Math.min(...tempFull) - 1);
+  const tempMax  = Math.ceil(Math.max(...tempFull)  + 1);
 
   // Current health per component (interpolated)
-  const curR = currentRow.health_recoating;
-  const curP = currentRow.health_printhead;
-  const curT = currentRow.health_thermal;
   const compCur: Record<string, Record<string, number>> = {
-    Recoating: { Blade: clamp(curR + 0.04), Motor: clamp(curR + 0.18), Rail: clamp(curR - 0.06) },
-    Printhead: { Nozzle: clamp(curP - 0.04), Resistors: clamp(curP + 0.12), Cleaning: clamp(curP + 0.02) },
-    Thermal:   { Heater: clamp(curT + 0.06), Sensor: clamp(curT + 0.02), Insulation: clamp(curT - 0.03) },
+    Recoating: { Blade: componentHealth(currentRow, "blade"), Motor: componentHealth(currentRow, "motor"), Rail: componentHealth(currentRow, "rail") },
+    Printhead: { Nozzle: componentHealth(currentRow, "nozzle"), Resistors: componentHealth(currentRow, "resistor"), Cleaning: componentHealth(currentRow, "cleaning") },
+    Thermal:   { Heater: componentHealth(currentRow, "heater"), Sensor: componentHealth(currentRow, "sensor"), Insulation: componentHealth(currentRow, "insulation") },
   };
 
   return (
