@@ -168,3 +168,10 @@
     linear-gradient(90deg, rgba(228, 234, 246, 0.12) 1px, transparent 1px);
   background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px;
 }
+
+/* ── Lobster notification countdown bar ───────────────────────────────────── */
+
+@keyframes lobster-shrink {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}

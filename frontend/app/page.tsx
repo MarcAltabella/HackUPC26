@@ -6,6 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { MachineExperience, type CompStatus, type ComponentStatuses } from "./machine-experience";
+import { LobsterNotifications } from "./lobster-notifications";
 import { MOCK_HISTORY, type MachineState } from "@/lib/mock-data";
 
 // ── Agent activity state ───────────────────────────────────────────────────────
@@ -449,6 +450,9 @@ export default function MachinePage() {
           blueprintMode={blueprintView}
           onDotClick={handleDotClick}
         />
+
+        {/* Lobster notifications — top-right corner */}
+        <LobsterNotifications />
 
         {/* Blueprint toggle */}
         <button
