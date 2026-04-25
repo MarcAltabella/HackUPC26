@@ -2,13 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { TimelineControls } from "@/components/timeline-controls";
 import { MOCK_STATE, MOCK_HISTORY, type MachineState, type HistoryRow } from "@/lib/mock-data";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const API_BASE = "http://localhost:8000";
 const SCENARIO  = "baseline_nominal";
-const SPEED     = 3; // ticks per second
+const BASE_SPEED = 3; // ticks per second at 1x
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -198,6 +199,7 @@ function LineChart({ data, animTick, totalTicks, color, label, unit, yMin, yMax 
   ].join("") : "";
 
   const last  = visPoints[visPoints.length - 1];
+  const cursorX = last ? Math.round(px(last.x)) + 0.5 : null;
   const yMid  = (yMin + yMax) / 2;
   const xTicks = [0, 0.25, 0.5, 0.75, 1].map(p => Math.round(p * (total - 1)));
   const gradId = `lg-${label.replace(/\W/g, "")}`;
@@ -246,8 +248,9 @@ function LineChart({ data, animTick, totalTicks, color, label, unit, yMin, yMax 
         {last && (
           <>
             <line
-              x1={px(last.x)} y1={padT} x2={px(last.x)} y2={padT + cH}
+              x1={cursorX!} y1={padT} x2={cursorX!} y2={padT + cH}
               stroke={color} strokeWidth="0.9" strokeDasharray="3 2" opacity="0.5"
+              shapeRendering="crispEdges"
             />
             <circle cx={px(last.x)} cy={py(last.y)} r="3" fill={color} />
           </>
@@ -301,9 +304,11 @@ export default function DashboardPage() {
   const [history,  setHistory]  = useState<HistoryRow[]>(MOCK_HISTORY);
   const [isDemo,   setIsDemo]   = useState(true);
   const [animTick, setAnimTick] = useState(0); // float
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
   // Mutable refs for the RAF loop — avoids closure-stale issues
   const animTimeRef  = useRef(0);
+  const speedRef     = useRef(1);
   const pausedRef    = useRef(false);
   const lastTimeRef  = useRef<number | null>(null);
   const rafRef       = useRef<number | null>(null);
@@ -326,6 +331,10 @@ export default function DashboardPage() {
     const id = setInterval(fetchState, 5_000);
     return () => { alive = false; clearInterval(id); };
   }, []);
+
+  useEffect(() => {
+    speedRef.current = playbackSpeed;
+  }, [playbackSpeed]);
 
   // History fetch
   useEffect(() => {
@@ -350,7 +359,7 @@ export default function DashboardPage() {
       lastTimeRef.current = now;
 
       if (!pausedRef.current) {
-        animTimeRef.current = Math.min(animTimeRef.current + dt * SPEED, total - 1);
+        animTimeRef.current = Math.min(animTimeRef.current + dt * BASE_SPEED * speedRef.current, total - 1);
 
         if (animTimeRef.current >= total - 1) {
           animTimeRef.current = total - 1;
@@ -431,6 +440,18 @@ export default function DashboardPage() {
     Printhead: { Nozzle: clamp(curP - 0.04), Resistors: clamp(curP + 0.12), Cleaning: clamp(curP + 0.02) },
     Thermal:   { Heater: clamp(curT + 0.06), Sensor: clamp(curT + 0.02), Insulation: clamp(curT - 0.03) },
   };
+
+  function handleScrub(nextTick: number) {
+    const bounded = Math.max(0, Math.min(nextTick, Math.max(history.length - 1, 0)));
+    animTimeRef.current = bounded;
+    pausedRef.current = false;
+    lastTimeRef.current = null;
+    if (pauseTimeout.current) {
+      clearTimeout(pauseTimeout.current);
+      pauseTimeout.current = null;
+    }
+    setAnimTick(bounded);
+  }
 
   return (
     <ScrollArea className="h-full">
@@ -540,15 +561,13 @@ export default function DashboardPage() {
               </div>
             ))}
 
-            {/* Axis footer */}
-            <div
-              className="flex text-[9px] font-mono text-muted-foreground border-t border-border/40 pt-2"
-              style={{ paddingLeft: "80px", paddingRight: "48px" }}
-            >
-              <span>t=0</span>
-              <span className="flex-1 text-center opacity-40">◄── simulation tick ──►</span>
-              <span>t={totalTicks - 1}</span>
-            </div>
+            <TimelineControls
+              totalTicks={totalTicks}
+              animTick={animTick}
+              onScrub={handleScrub}
+              speed={playbackSpeed}
+              onSpeedChange={setPlaybackSpeed}
+            />
           </div>
         </BpPanel>
 
