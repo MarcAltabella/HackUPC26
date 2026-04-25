@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { MachineExperience } from "./machine-experience";
 
 interface SubsystemState {
   subsystem_health: number;
@@ -129,20 +130,14 @@ export default function DashboardPage() {
   return (
     <div className="flex h-full">
 
-      {/* Center: 3D canvas placeholder (Milestone 6) */}
-      <div className="flex-1 flex flex-col items-center justify-center bg-muted/10 border-r border-border select-none">
-        <div className="text-center space-y-3 text-muted-foreground">
-          <div className="text-7xl opacity-20">⬡</div>
-          <p className="text-base font-medium">3D Machine View</p>
-          <p className="text-xs">
-            Milestone 6 — react-three-fiber canvas mounts here
-          </p>
-          {state && (
-            <p className="text-xs font-mono mt-4">
-              {state.scenario_id} · run {state.run_number} · t = {state.t}
-            </p>
-          )}
-        </div>
+      {/* Center: 3D machine view */}
+      <div className="flex-1 relative overflow-hidden border-r border-border">
+        <MachineExperience />
+        {state && (
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-xs font-mono text-muted-foreground bg-background/70 rounded px-2 py-1 pointer-events-none">
+            {state.scenario_id} · run {state.run_number} · t = {state.t}
+          </div>
+        )}
       </div>
 
       {/* Right sidebar */}
