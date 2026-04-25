@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { TimelineControls } from "@/components/timeline-controls";
 import { MachineExperience, type CompStatus, type ComponentStatuses } from "./machine-experience";
 import { MOCK_HISTORY, type MachineState } from "@/lib/mock-data";
 
@@ -19,6 +20,7 @@ interface AgentStatus {
 
 const TICK_INTERVAL = 333;
 const LOOP_PAUSE    = 1500;
+const BASE_SPEED    = 1;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -350,6 +352,7 @@ function AlertCard({
 
 export default function MachinePage() {
   const [animTick,      setAnimTick]      = useState(0);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [boosts,        setBoosts]        = useState<Boosts>({ recoating: 0, printhead: 0, thermal: 0 });
   const [agentStatus,   setAgentStatus]   = useState<AgentStatus | null>(null);
   const [blueprintView, setBlueprintView] = useState(false);
@@ -357,9 +360,11 @@ export default function MachinePage() {
   const triggeredRef  = useRef<Set<string>>(new Set());
   const agentTimers   = useRef<ReturnType<typeof setTimeout>[]>([]);
 
+  const maxTick = MOCK_HISTORY.length - 1;
+
   // Animation loop
   useEffect(() => {
-    if (animTick >= 99) {
+    if (animTick >= maxTick) {
       const id = setTimeout(() => {
         triggeredRef.current.clear();
         setBoosts({ recoating: 0, printhead: 0, thermal: 0 });
@@ -367,9 +372,10 @@ export default function MachinePage() {
       }, LOOP_PAUSE);
       return () => clearTimeout(id);
     }
-    const id = setTimeout(() => setAnimTick(t => t + 1), TICK_INTERVAL);
+    const msPerTick = TICK_INTERVAL / (BASE_SPEED * playbackSpeed);
+    const id = setTimeout(() => setAnimTick(t => Math.min(t + 1, maxTick)), msPerTick);
     return () => clearTimeout(id);
-  }, [animTick]);
+  }, [animTick, maxTick, playbackSpeed]);
 
   // Threshold crossing detection
   useEffect(() => {
@@ -439,6 +445,11 @@ export default function MachinePage() {
     { label: "Thermal",   health: animState.thermal.subsystem_health   },
   ];
 
+  function handleScrub(nextTick: number) {
+    const bounded = Math.max(0, Math.min(Math.round(nextTick), maxTick));
+    setAnimTick(bounded);
+  }
+
   return (
     <div className="flex h-full">
 
@@ -465,11 +476,20 @@ export default function MachinePage() {
           Blueprint
         </button>
 
-        {/* Dot-click hint */}
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-xs font-mono text-muted-foreground bg-background/70 rounded px-2 py-1 pointer-events-none">
-          humid_factory · t = {animTick}
-          <span className="ml-2 text-yellow-400">· demo</span>
-          <span className="ml-2 opacity-50">· click dots to inspect</span>
+        <div className="absolute inset-x-3 bottom-3 z-10 rounded border border-border bg-background/75 px-3 py-2 backdrop-blur-sm">
+          <div className="pointer-events-none mb-1 text-center text-xs font-mono text-muted-foreground">
+            humid_factory · t = {animTick}
+            <span className="ml-2 text-yellow-400">· demo</span>
+            <span className="ml-2 opacity-50">· click dots to inspect</span>
+          </div>
+          <TimelineControls
+            totalTicks={MOCK_HISTORY.length}
+            animTick={animTick}
+            onScrub={handleScrub}
+            speed={playbackSpeed}
+            onSpeedChange={setPlaybackSpeed}
+            className="pt-1"
+          />
         </div>
       </div>
 

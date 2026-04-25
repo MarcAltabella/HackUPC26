@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { ContactShadows, Edges, Environment, Grid, OrbitControls, RoundedBox, useTexture } from "@react-three/drei";
+import { ContactShadows, Edges, Environment, Grid, Html, OrbitControls, RoundedBox, useTexture } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import hpLogoImage from "../data/HP_logo_2025.svg.png";
@@ -49,6 +49,10 @@ function statusVisible(s: CompStatus): boolean {
   return s !== "FUNCTIONAL" && s !== "NOMINAL";
 }
 
+function statusNeedsRedHighlight(s: CompStatus): boolean {
+  return s === "WARNING" || s === "DEGRADED" || s === "CRITICAL" || s === "FAILED";
+}
+
 // ── Component hotspot positions (model-local, inside [0,0.09,0] group) ───────
 
 const HOTSPOTS: Record<DotKey, Vector3Tuple> = {
@@ -61,6 +65,18 @@ const HOTSPOTS: Record<DotKey, Vector3Tuple> = {
   heater:     [ 1.26, 0.73,  0.05],
   sensor:     [ 0.85, 0.88, -0.15],
   insulation: [ 1.48, 0.52,  0.10],
+};
+
+const DOT_LABELS: Record<DotKey, { title: string; group: string }> = {
+  blade: { title: "Blade", group: "Recoating" },
+  motor: { title: "Motor", group: "Recoating" },
+  rail: { title: "Rail", group: "Recoating" },
+  nozzle: { title: "Nozzle", group: "Printhead" },
+  resistors: { title: "Resistors", group: "Printhead" },
+  cleaning: { title: "Cleaning", group: "Printhead" },
+  heater: { title: "Heater", group: "Thermal" },
+  sensor: { title: "Sensor", group: "Thermal" },
+  insulation: { title: "Insulation", group: "Thermal" },
 };
 
 // Transform hotspot from model-local → world space
@@ -107,12 +123,17 @@ function AlertDot({
   dotKey: DotKey;
   onDotClick?: DotClickHandler;
 }) {
+  const bp = useContext(BlueprintCtx);
   const coreRef = useRef<THREE.Mesh>(null!);
+  const alertAreaRef = useRef<THREE.Mesh>(null!);
+  const [isHovered, setIsHovered] = useState(false);
   const visible = statusVisible(status);
+  const redHighlight = statusNeedsRedHighlight(status);
   const isCrit  = status === "CRITICAL" || status === "FAILED";
   const color   = statusDotColor(status);
   const speed   = isCrit ? 5.5 : 2.5;
   const amp     = isCrit ? 0.45 : 0.18;
+  const label   = DOT_LABELS[dotKey];
 
   useFrame(({ clock }) => {
     if (!coreRef.current || !visible) return;
@@ -120,7 +141,12 @@ function AlertDot({
     coreRef.current.scale.setScalar(1 + amp * Math.abs(Math.sin(t * speed)));
   });
 
-  if (!visible) return null;
+  useFrame(({ clock }) => {
+    if (!alertAreaRef.current || !bp || !redHighlight) return;
+    const t = clock.getElapsedTime();
+    const pulse = 0.14 + Math.abs(Math.sin(t * 2.1)) * 0.18;
+    (alertAreaRef.current.material as THREE.MeshStandardMaterial).opacity = pulse;
+  });
 
   function handleClick(e: { stopPropagation: () => void }) {
     e.stopPropagation();
@@ -129,37 +155,78 @@ function AlertDot({
 
   function handlePointerOver(e: { stopPropagation: () => void }) {
     e.stopPropagation();
+    setIsHovered(true);
     document.body.style.cursor = "pointer";
   }
 
   function handlePointerOut() {
+    setIsHovered(false);
     document.body.style.cursor = "auto";
   }
 
   return (
     <group position={position}>
-      {/* Clickable core (pulsing) */}
-      <mesh
-        ref={coreRef}
-        onClick={handleClick}
-        onPointerOver={handlePointerOver}
-        onPointerOut={handlePointerOut}
-      >
-        <sphereGeometry args={[0.055, 14, 14]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={2.2} />
-      </mesh>
-      {/* Halo — also clickable */}
+      {/* Hover/click hit area is always present so labels are discoverable */}
       <mesh onClick={handleClick} onPointerOver={handlePointerOver} onPointerOut={handlePointerOut}>
-        <sphereGeometry args={[0.088, 10, 10]} />
-        <meshStandardMaterial
-          color={color}
-          emissive={color}
-          emissiveIntensity={0.3}
-          transparent
-          opacity={0.2}
-          depthWrite={false}
-        />
+        <sphereGeometry args={[0.095, 14, 14]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
+
+      {visible && (
+        <>
+          {/* Blueprint red component-area highlight */}
+          {bp && redHighlight && (
+            <mesh ref={alertAreaRef}>
+              <sphereGeometry args={[0.13, 18, 18]} />
+              <meshStandardMaterial
+                color="#ff4d4f"
+                emissive="#ff4d4f"
+                emissiveIntensity={0.35}
+                transparent
+                opacity={0.2}
+                depthWrite={false}
+              />
+            </mesh>
+          )}
+
+          {/* Clickable core (pulsing) */}
+          <mesh
+            ref={coreRef}
+            onClick={handleClick}
+            onPointerOver={handlePointerOver}
+            onPointerOut={handlePointerOut}
+          >
+            <sphereGeometry args={[0.055, 14, 14]} />
+            <meshStandardMaterial color={color} emissive={color} emissiveIntensity={2.2} />
+          </mesh>
+          {/* Halo — also clickable */}
+          <mesh onClick={handleClick} onPointerOver={handlePointerOver} onPointerOut={handlePointerOut}>
+            <sphereGeometry args={[0.088, 10, 10]} />
+            <meshStandardMaterial
+              color={color}
+              emissive={color}
+              emissiveIntensity={0.3}
+              transparent
+              opacity={0.2}
+              depthWrite={false}
+            />
+          </mesh>
+        </>
+      )}
+
+      <Html position={[0, 0.14, 0]} center distanceFactor={12} style={{ pointerEvents: "none" }}>
+        <div
+          className="rounded border border-blue-300/45 bg-[#1f3f86]/88 px-2 py-1 text-[10px] font-mono text-blue-100 shadow-[0_2px_10px_rgba(15,23,42,0.35)] transition-all duration-200"
+          style={{
+            opacity: isHovered ? 1 : 0,
+            transform: `translateY(${isHovered ? "0px" : "4px"})`,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label.title}
+          <span className="ml-1 opacity-70">· {label.group}</span>
+        </div>
+      </Html>
     </group>
   );
 }
@@ -208,13 +275,13 @@ function Material({
     return (
       <>
         <meshStandardMaterial
-          color="#2C3E78"
-          emissive="#98AEDD"
-          emissiveIntensity={0.22}
+          color="#3554A7"
+          emissive="#AFC3EE"
+          emissiveIntensity={0.28}
           transparent
-          opacity={0.55}
+          opacity={0.4}
         />
-        <Edges color="#E4EAF6" threshold={15} />
+        <Edges color="#F4F8FF" threshold={8} />
       </>
     );
   }
@@ -492,16 +559,41 @@ function ModelScene({
 }) {
   const bp = !!blueprintMode;
   const [focusWorld, setFocusWorld] = useState<THREE.Vector3 | null>(null);
+  const [isUserControlling, setIsUserControlling] = useState(false);
+  const autoRotateResumeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (autoRotateResumeRef.current) clearTimeout(autoRotateResumeRef.current);
+    };
+  }, []);
 
   function handleDotClick(key: DotKey) {
     setFocusWorld(hotspotWorldPos(key));
     onDotClick?.(key);
   }
 
+  function handleControlStart() {
+    if (autoRotateResumeRef.current) {
+      clearTimeout(autoRotateResumeRef.current);
+      autoRotateResumeRef.current = null;
+    }
+    setIsUserControlling(true);
+  }
+
+  function handleControlEnd() {
+    if (autoRotateResumeRef.current) clearTimeout(autoRotateResumeRef.current);
+    // Keep user control "authoritative" briefly, then resume auto-rotation.
+    autoRotateResumeRef.current = setTimeout(() => {
+      setIsUserControlling(false);
+      autoRotateResumeRef.current = null;
+    }, 2500);
+  }
+
   return (
     <BlueprintCtx.Provider value={bp}>
       <Canvas camera={{ position: [4.4, 2.5, 4.9], fov: 34 }} dpr={[1, 2]} shadows={!bp}>
-        <color attach="background" args={[bp ? "#405CB1" : "#050607"]} />
+        <color attach="background" args={[bp ? "#405CB1" : "#2F4F9E"]} />
 
         {bp ? (
           <>
@@ -512,10 +604,10 @@ function ModelScene({
           </>
         ) : (
           <>
-            <ambientLight intensity={0.42} />
-            <directionalLight position={[4.8, 6.2, 4.2]}  intensity={2.55} castShadow shadow-mapSize-width={2048} shadow-mapSize-height={2048} />
-            <directionalLight position={[-4.2, 3,  -3.6]} intensity={0.52} />
-            <pointLight       position={[-1.9, 1.4, 1.2]} intensity={0.8}  color="#9fe8ff" />
+            <ambientLight intensity={0.62} color="#C7D6F7" />
+            <directionalLight position={[4.8, 6.2, 4.2]}  intensity={2.25} color="#E8F0FF" castShadow shadow-mapSize-width={2048} shadow-mapSize-height={2048} />
+            <directionalLight position={[-4.2, 3,  -3.6]} intensity={0.58} color="#6F8FD8" />
+            <pointLight       position={[-1.9, 1.4, 1.2]} intensity={1.0}  color="#9FE3FF" />
             <Environment preset="warehouse" />
           </>
         )}
@@ -537,7 +629,7 @@ function ModelScene({
           ) : (
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.012, 0]} receiveShadow>
               <planeGeometry args={[8, 6]} />
-              <meshStandardMaterial color="#0d1011" roughness={0.86} metalness={0.08} />
+              <meshStandardMaterial color="#1C2B56" roughness={0.84} metalness={0.08} />
             </mesh>
           )}
           <HpMetalJetS100Model statuses={statuses} onDotClick={handleDotClick} />
@@ -552,10 +644,15 @@ function ModelScene({
         <OrbitControls
           makeDefault
           enablePan={false}
+          enableDamping
+          autoRotate={bp && !isUserControlling}
+          autoRotateSpeed={0.6}
           target={[0, 0.42, 0]}
           minDistance={3.1}
           maxDistance={7.2}
           maxPolarAngle={1.42}
+          onStart={handleControlStart}
+          onEnd={handleControlEnd}
         />
       </Canvas>
     </BlueprintCtx.Provider>
@@ -572,7 +669,7 @@ export function MachineExperience({
   onDotClick?: DotClickHandler;
 }) {
   return (
-    <div className="h-full w-full overflow-hidden" style={{ background: blueprintMode ? "#405CB1" : "#050607" }}>
+    <div className="h-full w-full overflow-hidden" style={{ background: blueprintMode ? "#405CB1" : "#2F4F9E" }}>
       <ModelScene statuses={statuses} blueprintMode={blueprintMode} onDotClick={onDotClick} />
     </div>
   );
