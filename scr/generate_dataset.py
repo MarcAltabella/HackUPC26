@@ -476,11 +476,24 @@ CREATE TABLE IF NOT EXISTS simulation_log (
     run_id              INTEGER NOT NULL,
     t                   INTEGER NOT NULL,
     -- Environmental drivers
-    temperature         REAL,
-    humidity            REAL,
-    load                REAL,
-    maintenance         REAL,
-    is_shock            INTEGER,
+    temperature             REAL,
+    humidity                REAL,
+    load                    REAL,
+    maintenance             REAL,
+    is_shock                INTEGER,
+    -- Temporal accumulation features
+    steps_since_maintenance INTEGER,
+    cumulative_shocks       INTEGER,
+    -- Lag-1 health values (autoregression features — state at previous tick)
+    health_prev_blade       REAL,
+    health_prev_motor       REAL,
+    health_prev_rail        REAL,
+    health_prev_nozzle      REAL,
+    health_prev_resistor    REAL,
+    health_prev_cleaning    REAL,
+    health_prev_heater      REAL,
+    health_prev_sensor      REAL,
+    health_prev_insulation  REAL,
     -- Recoating subsystem
     health_blade        REAL,
     health_motor        REAL,
@@ -536,6 +549,10 @@ CREATE INDEX IF NOT EXISTS idx_run      ON simulation_log (scenario_id, run_id, 
 _INSERT_COLS = [
     "scenario_id", "run_id", "t",
     "temperature", "humidity", "load", "maintenance", "is_shock",
+    "steps_since_maintenance", "cumulative_shocks",
+    "health_prev_blade", "health_prev_motor", "health_prev_rail",
+    "health_prev_nozzle", "health_prev_resistor", "health_prev_cleaning",
+    "health_prev_heater", "health_prev_sensor", "health_prev_insulation",
     "health_blade", "health_motor", "health_rail",
     "status_blade", "status_motor", "status_rail",
     "metric_blade_mm", "metric_motor_vib", "metric_rail_dev",
@@ -634,28 +651,51 @@ class ImplementationLog:
 # ══════════════════════════════════════════════════════════════
 
 
+_COMPONENTS = ("blade", "motor", "rail", "nozzle", "resistor",
+               "cleaning", "heater", "sensor", "insulation")
+
+
 def run_simulation(cfg: SimulationConfig, run_id: int, historian: Historian) -> int:
     seed = _SCENARIO_SEED[cfg.scenario_id] + run_id * 997
     rng = np.random.default_rng(seed)
     state = Phase1State()
     ticks = 0
+    steps_since_maintenance = 0
+    cumulative_shocks = 0
+    # Lag-1 health: initialised at 1.0 (all components brand-new at t=0)
+    prev_health: dict[str, float] = {c: 1.0 for c in _COMPONENTS}
 
     for t in range(cfg.total_steps):
         d = sample_drivers(t, cfg, rng)
+
+        if d.maintenance_level > 0:
+            steps_since_maintenance = 0
+        else:
+            steps_since_maintenance += 1
+        if d.is_shock:
+            cumulative_shocks += 1
+
         state, metrics = step_phase1(state, d)
 
         historian.write({
-            "scenario_id": cfg.scenario_id,
-            "run_id":      run_id,
-            "t":           t,
-            "temperature": round(d.temperature, 3),
-            "humidity":    round(d.humidity,    4),
-            "load":        round(d.load,         1),
-            "maintenance": d.maintenance_level,
-            "is_shock":    int(d.is_shock),
+            "scenario_id":             cfg.scenario_id,
+            "run_id":                  run_id,
+            "t":                       t,
+            "temperature":             round(d.temperature, 3),
+            "humidity":                round(d.humidity,    4),
+            "load":                    round(d.load,         1),
+            "maintenance":             d.maintenance_level,
+            "is_shock":                int(d.is_shock),
+            "steps_since_maintenance": steps_since_maintenance,
+            "cumulative_shocks":       cumulative_shocks,
+            **{f"health_prev_{c}": round(prev_health[c], 6) for c in _COMPONENTS},
             **metrics,
         })
         ticks += 1
+
+        # Advance lag-1 state for the next tick
+        for c in _COMPONENTS:
+            prev_health[c] = metrics[f"health_{c}"]
 
         # Early stop when all nine components have failed
         if all(metrics[f"status_{c}"] == "FAILED"
@@ -865,7 +905,7 @@ shock (p=0.05):
 - Persistence backend used: `{backend_used}`
 - SQLite primary path: `{db_path}`
 - CSV fallback path: `{csv_path}`
-- NN input features: temperature, humidity, load, maintenance, is_shock
+- NN input features: temperature, humidity, load, maintenance, is_shock, steps_since_maintenance, cumulative_shocks
 - NN targets (per component): label_* (0=FUNCTIONAL 1=DEGRADED 2=CRITICAL 3=FAILED)
 - Subsystem aggregate columns: health_recoating, health_printhead, health_thermal
 """)
@@ -879,7 +919,7 @@ shock (p=0.05):
 - Total rows: {total_rows:,}
 - SQLite: `{db_path}`
 - CSV fallback: `{csv_path}`
-- NN input features: temperature, humidity, load, maintenance, is_shock
+- NN input features: temperature, humidity, load, maintenance, is_shock, steps_since_maintenance, cumulative_shocks
 - NN targets (per component): label_* (0=FUNCTIONAL 1=DEGRADED 2=CRITICAL 3=FAILED)
 - Subsystem aggregate columns: health_recoating, health_printhead, health_thermal
 """)

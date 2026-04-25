@@ -1,6 +1,6 @@
 # Implementation Log — Dataset Generator
 
-Generated: 2026-04-25T11:56:23.789944
+Generated: 2026-04-25T12:45:17.329364
 
 ## Milestone 1.1 — SimulationConfig
 
@@ -179,7 +179,7 @@ shock (p=0.05):
 - Persistence backend used: `sqlite`
 - SQLite primary path: `/home/swallow/Desktop/Projects/HackUPC2026/data/simulation.db`
 - CSV fallback path: `/home/swallow/Desktop/Projects/HackUPC2026/data/training_dataset.csv`
-- NN input features: temperature, humidity, load, maintenance, is_shock
+- NN input features: temperature, humidity, load, maintenance, is_shock, steps_since_maintenance, cumulative_shocks
 - NN targets (per component): label_* (0=FUNCTIONAL 1=DEGRADED 2=CRITICAL 3=FAILED)
 - Subsystem aggregate columns: health_recoating, health_printhead, health_thermal
 
