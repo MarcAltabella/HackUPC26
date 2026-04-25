@@ -137,42 +137,76 @@ def sample_drivers(t, total_steps, chaos_prob=0.02):
 
 ```sql
 CREATE TABLE simulation_log (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    scenario_id TEXT    NOT NULL,
-    t           INTEGER NOT NULL,
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    scenario_id         TEXT    NOT NULL,
+    run_id              INTEGER NOT NULL,
+    t                   INTEGER NOT NULL,
     -- Environmental drivers
-    temperature REAL,
-    humidity    REAL,
-    load        REAL,
-    maintenance REAL,
-    -- Component health indices (0.0 – 1.0)
-    health_blade   REAL,
-    health_nozzle  REAL,
-    health_heater  REAL,
-    -- Component statuses
-    status_blade   TEXT,
-    status_nozzle  TEXT,
-    status_heater  TEXT,
-    -- Component metrics (physical variables)
-    metric_blade   REAL,   -- blade thickness mm
-    metric_nozzle  REAL,   -- clog probability
-    metric_heater  REAL,   -- resistance Ω
-    -- RL columns
-    action_taken   INTEGER,  -- 0 | 1 | 2 | NULL
-    reward         REAL
+    temperature         REAL,
+    humidity            REAL,
+    load                REAL,
+    maintenance         REAL,
+    is_shock            INTEGER,
+    -- Recoating subsystem
+    health_blade        REAL,
+    health_motor        REAL,
+    health_rail         REAL,
+    status_blade        TEXT,
+    status_motor        TEXT,
+    status_rail         TEXT,
+    metric_blade_mm     REAL,   -- blade thickness (mm)
+    metric_motor_vib    REAL,   -- vibration (mm/s)
+    metric_rail_dev     REAL,   -- rail deviation (µm)
+    -- Printhead subsystem
+    health_nozzle       REAL,
+    health_resistor     REAL,
+    health_cleaning     REAL,
+    status_nozzle       TEXT,
+    status_resistor     TEXT,
+    status_cleaning     TEXT,
+    metric_nozzle_clog  REAL,   -- clog probability
+    metric_resistor_pct REAL,   -- resistance drift (%)
+    metric_cleaning_eff REAL,   -- cleaning efficiency
+    -- Thermal subsystem
+    health_heater       REAL,
+    health_sensor       REAL,
+    health_insulation   REAL,
+    status_heater       TEXT,
+    status_sensor       TEXT,
+    status_insulation   TEXT,
+    metric_heater_ohm   REAL,   -- resistance (Ω)
+    metric_sensor_err   REAL,   -- measurement error (°C)
+    metric_insulation_r REAL,   -- thermal resistance (°C·m/W)
+    -- Subsystem aggregate health (min across subsystem components)
+    health_recoating    REAL,
+    health_printhead    REAL,
+    health_thermal      REAL,
+    -- Classification labels (0=FUNCTIONAL, 1=DEGRADED, 2=CRITICAL, 3=FAILED)
+    label_blade         INTEGER,
+    label_motor         INTEGER,
+    label_rail          INTEGER,
+    label_nozzle        INTEGER,
+    label_resistor      INTEGER,
+    label_cleaning      INTEGER,
+    label_heater        INTEGER,
+    label_sensor        INTEGER,
+    label_insulation    INTEGER,
+    -- RL columns (NULL during dataset generation)
+    action_taken        INTEGER,
+    reward              REAL
 );
 
 CREATE INDEX idx_scenario ON simulation_log (scenario_id, t);
+CREATE INDEX idx_run      ON simulation_log (scenario_id, run_id, t);
 ```
 
 ### CSV fallback
 
 ```
-t,scenario_id,temperature,humidity,load,maintenance,
-health_blade,health_nozzle,health_heater,
-status_blade,status_nozzle,status_heater,
-metric_blade,metric_nozzle,metric_heater,
-action_taken,reward
+Same column set and order as `simulation_log`, including:
+scenario/run identifiers, environmental drivers, all nine component
+health/status/metric fields, subsystem aggregate health columns,
+classification labels, and RL columns.
 ```
 
 ---
@@ -183,57 +217,53 @@ action_taken,reward
 
 State vector `s = (bin_recoating, bin_printhead, bin_thermal, bin_time_since_maint)`.
 
-The RL agent should not observe one health value per individual component. Instead, it observes one health value per subsystem, defined as the minimum health among the components inside that subsystem. This lets you model all three components in each subsystem without exploding the Q-table size.
+The RL agent should not observe one health value per individual component. Instead, it observes one health value per subsystem, defined as the minimum health among the components inside that subsystem. This keeps the state space compact while still capturing the weakest point in each subsystem.
 
 For example:
 
 - `health_recoating = min(health_blade, health_motor, health_rail)`
-- `health_printhead = min(health_nozzle_plate, health_resistors, health_cleaning_interface)`
-- `health_thermal = min(health_heater, health_temp_sensor, health_insulation)`
-
-This means the agent sees the weakest component inside each subsystem. If the motor or rail degrades faster than the blade, the Recoating subsystem state drops accordingly.
+- `health_printhead = min(health_nozzle, health_resistor, health_cleaning)`
+- `health_thermal = min(health_heater, health_sensor, health_insulation)`
 
 | Dimension | Values | Bins |
 |---|---|---|
 | `health_recoating` | `min(blade, motor, rail)` | 5 |
-| `health_printhead` | `min(nozzle_plate, firing_resistors, cleaning_interface)` | 5 |
-| `health_thermal` | `min(heating_elements, temperature_sensors, insulation_panels)` | 5 |
+| `health_printhead` | `min(nozzle, resistor, cleaning)` | 5 |
+| `health_thermal` | `min(heater, sensor, insulation)` | 5 |
 | `steps_since_maintenance` | 0 – ∞ | 3 (recent/medium/long) |
 
-Total states: 5 × 5 × 5 × 3 = **375**
+Total states: `5 × 5 × 5 × 3 = 375`
 
 ```python
+SUBSYSTEMS = {
+    "recoating": ["blade", "motor", "rail"],
+    "printhead": ["nozzle", "resistor", "cleaning"],
+    "thermal": ["heater", "sensor", "insulation"],
+}
+
+
 def subsystem_healths(state_report):
-    recoating = min(
-        state_report["health_blade"],
-        state_report["health_motor"],
-        state_report["health_rail"],
-    )
-    printhead = min(
-        state_report["health_nozzle_plate"],
-        state_report["health_firing_resistors"],
-        state_report["health_cleaning_interface"],
-    )
-    thermal = min(
-        state_report["health_heating_elements"],
-        state_report["health_temperature_sensors"],
-        state_report["health_insulation_panels"],
-    )
-    return recoating, printhead, thermal
+    return {
+        name: min(state_report[f"health_{key}"] for key in keys)
+        for name, keys in SUBSYSTEMS.items()
+    }
 
 
 def discretise(state_report, steps_since_maint):
-    def bin5(v): return min(int(v * 5), 4)
+    def bin5(v):
+        return min(int(v * 5), 4)
+
     def bin_time(n):
         if n < 20: return 0
         if n < 60: return 1
         return 2
 
-    recoating, printhead, thermal = subsystem_healths(state_report)
+    mins = subsystem_healths(state_report)
+
     return (
-        bin5(recoating),
-        bin5(printhead),
-        bin5(thermal),
+        bin5(mins["recoating"]),
+        bin5(mins["printhead"]),
+        bin5(mins["thermal"]),
         bin_time(steps_since_maint),
     )
 ```
@@ -250,8 +280,8 @@ def discretise(state_report, steps_since_maint):
 
 ```python
 def compute_reward(state_report, action, prev_state_report=None):
-    recoating, printhead, thermal = subsystem_healths(state_report)
-    min_health = min(recoating, printhead, thermal)
+    mins = subsystem_healths(state_report)
+    min_health = min(mins.values())
 
     any_failed = any(
         value == "FAILED"
@@ -262,7 +292,6 @@ def compute_reward(state_report, action, prev_state_report=None):
     action_cost = {0: 0, 1: -5, 2: -10}[action]
     failure_penalty = -100 if any_failed else 0
     alive_bonus = +1
-    # Shaped intermediate signal: penalise health below 0.3
     health_signal = -0.5 * max(0, 0.3 - min_health)
 
     return alive_bonus + action_cost + failure_penalty + health_signal
@@ -373,37 +402,35 @@ Run two or more `SimulationConfig` instances with different profiles. Tag each w
 
 ## Implementation milestones
 
-- [ ] **Milestone 1 — Simulation clock and synthetic driver generation**
-- [ ] `1.1` Define `SimulationConfig` and scenario/run identifiers
-- [ ] `1.2` Implement the Clock loop and time-step progression
-- [ ] `1.3` Implement deterministic driver generation
-- [ ] `1.4` Implement stochastic and chaos driver generation
-- [ ] `1.5` Logging rule: every implemented driver profile, threshold, and scenario assumption must be written to a running implementation log
+- [x] **Milestone 1 — Simulation clock and synthetic driver generation**
+- [x] `1.1` Define `SimulationConfig` and scenario/run identifiers
+- [x] `1.2` Implement the Clock loop and time-step progression
+- [x] `1.3` Implement deterministic driver generation
+- [x] `1.4` Implement stochastic and chaos driver generation
+- [x] `1.5` Logging rule: every implemented driver profile, threshold, and scenario assumption must be written to a running implementation log
 Success criteria: the system can generate synthetic driver values at every tick for multiple scenario types.
 
 - [ ] **Milestone 2 — Phase 1 integration**
-- [ ] `2.1` Connect the Clock to the Phase 1 engine
-- [ ] `2.2` Pass generated drivers into Phase 1 at each tick
-- [ ] `2.3` Standardize the returned state report structure across all modeled components
-- [ ] `2.4` Stop conditions for end-of-run or component failure
-- [ ] `2.5` Logging rule: every interface change between Phase 2 and Phase 1 must be logged with date and reason
+- [x] `2.1` Connect the Clock to the Phase 1 engine
+- [x] `2.2` Pass generated drivers into Phase 1 at each tick
+- [x] `2.3` Standardize the returned state report structure across all modeled components
+- [x] `2.4` Stop conditions for end-of-run or component failure
 Success criteria: each time step produces a valid machine state from the Phase 1 engine.
 
 - [ ] **Milestone 3 — Historian and persistence**
-- [ ] `3.1` Create SQLite schema for `simulation_log`
-- [ ] `3.2` Implement tick-by-tick persistence
-- [ ] `3.3` Add scenario/run tagging for comparison
-- [ ] `3.4` Add CSV export fallback
-- [ ] `3.5` Logging rule: schema changes, added fields, and persistence decisions must be captured in the implementation log
+- [x] `3.1` Create SQLite schema for `simulation_log`
+- [x] `3.2` Implement tick-by-tick persistence
+- [x] `3.3` Add scenario/run tagging for comparison
+- [x] `3.4` Add CSV export fallback
 Success criteria: every simulation tick is stored and queryable by run and timestamp.
 
-- [ ] **Milestone 4 — Baseline simulation runs**
-- [ ] `4.1` Implement `baseline_nominal`
-- [ ] `4.2` Implement `humid_factory`
-- [ ] `4.3` Implement `chaos_run`
-- [ ] `4.4` Implement `no_maintenance`
-- [ ] `4.5` Implement `fixed_schedule`
-- [ ] `4.6` Logging rule: every scenario definition and parameter choice must be recorded for reproducibility
+- [x] **Milestone 4 — Baseline simulation runs**
+- [x] `4.1` Implement `baseline_nominal`
+- [x] `4.2` Implement `humid_factory`
+- [x] `4.3` Implement `chaos_run`
+- [x] `4.4` Implement `no_maintenance`
+- [x] `4.5` Implement `fixed_schedule`
+- [x] `4.6` Logging rule: every scenario definition and parameter choice must be recorded for reproducibility
 Success criteria: multiple scenarios can be executed and compared consistently.
 
 - [ ] **Milestone 5 — RL maintenance agent**
