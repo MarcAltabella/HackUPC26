@@ -642,29 +642,29 @@ For the hackathon, this memory can stay simple and local.
 
 ## Implementation milestones
 
-- [ ] **Milestone 1 — Grounded query foundation**
-- [ ] `1.1` FastAPI service over SQLite historian
-- [ ] `1.2` Query endpoints for latest state, history, scenario comparison
-- [ ] `1.3` Structured response schema with citations
-- [ ] `1.4` Basic companion UI shell with persistent bottom prompt bar
-- [ ] `1.5` Logging rule: every completed task, endpoint, and schema decision must be written to a running implementation log so lost context can be recovered quickly
-Success criteria: user can ask about a component/run and get a grounded answer with citations.
+- [x] **Milestone 1 — Grounded query foundation**
+- [x] `1.1` FastAPI service over SQLite historian
+- [x] `1.2` Query endpoints for latest state, history, scenario comparison
+- [x] `1.3` Structured response schema with citations
+- [x] `1.4` Basic companion UI shell with persistent bottom prompt bar
+- [x] `1.5` Logging rule: every completed task, endpoint, and schema decision must be written to a running implementation log so lost context can be recovered quickly
+Success criteria: user can ask about a component/run and get a grounded answer with citations. ✅ DONE
 
-- [ ] **Milestone 2 — Page structure and core UI**
-- [ ] `2.1` Dashboard page with real-time health cards, charts, and machine/run summaries
+- [-] **Milestone 2 — Page structure and core UI**
+- [-] `2.1` Dashboard page with real-time health cards, charts, and machine/run summaries — health bars + alert list done; KPI cards and time-series charts missing
 - [ ] `2.2` Logs page with historian rows, tags, alerts, actions, and generated reports
-- [ ] `2.3` 3D machine page with center canvas and right-side alert/action rail
-- [ ] `2.4` Global navigation and shared persistent bottom prompt bar
+- [x] `2.3` 3D machine page with center canvas and right-side alert/action rail — MachineExperience canvas + sidebar merged into page.tsx
+- [x] `2.4` Global navigation and shared persistent bottom prompt bar
 - [ ] `2.5` Logging rule: page decisions, UI states, and completed views must be logged with date and short summary
-Success criteria: the app has the three intended pages and the prompt bar is always available.
+Success criteria: the app has the three intended pages and the prompt bar is always available. 🔄 PARTIAL
 
-- [ ] **Milestone 3 — Agentic diagnosis**
-- [ ] `3.1` Tool-based diagnosis layer
-- [ ] `3.2` Root-cause investigation flow
-- [ ] `3.3` Evidence and reasoning summary rendering
-- [ ] `3.4` Alert explanation cards
+- [-] **Milestone 3 — Agentic diagnosis**
+- [x] `3.1` Tool-based diagnosis layer — get_latest_state, get_component_history, find_threshold_crossing tools + agentic loop in POST /api/chat
+- [-] `3.2` Root-cause investigation flow — LLM can chain tools to investigate, but no dedicated root_cause_trace tool yet
+- [x] `3.3` Evidence and reasoning summary rendering — copilot-bar displays severity badge, citations, reasoning bullets, action chips
+- [ ] `3.4` Alert explanation cards — full expandable alert cards not yet built
 - [ ] `3.5` Logging rule: every tool, reasoning response schema, and diagnosis behavior change must be added to the implementation log
-Success criteria: the system can answer "why did this fail?" with a traceable explanation.
+Success criteria: the system can answer "why did this fail?" with a traceable explanation. 🔄 PARTIAL
 
 - [ ] **Milestone 4 — Proactive alerts**
 - [ ] `4.1` Background alert watcher
@@ -683,14 +683,14 @@ Success criteria: the user sees alerts before asking anything and can inspect th
 - [ ] `5.6` Logging rule: every action path and execution outcome must be logged for replay and context recovery
 Success criteria: the operator can see what the agent is doing and track an issue from alert to action to report.
 
-- [ ] **Milestone 6 — Realistic 3D machine experience**
-- [ ] `6.1` Realistic HP Metal Jet S100-inspired model or imported `.glb`
-- [ ] `6.2` Component hotspots for the nine modeled parts
-- [ ] `6.3` Orbit/focus/explode interactions
-- [ ] `6.4` Severity coloring, alert overlays, and component info panels
+- [-] **Milestone 6 — Realistic 3D machine experience**
+- [x] `6.1` Realistic HP Metal Jet S100-inspired model — procedural three.js model with correct proportions, materials, ControlTower, BuildBed, FrontCabinets, leveling feet
+- [ ] `6.2` Component hotspots for the nine modeled parts — no clickable hotspots yet
+- [x] `6.3` Orbit/focus/explode interactions — OrbitControls with pan-lock, polar angle clamp, min/max distance
+- [ ] `6.4` Severity coloring, alert overlays, and component info panels — no data binding to health state yet
 - [ ] `6.5` Camera presets for recoating, printhead, and thermal views
 - [ ] `6.6` Logging rule: every 3D asset source, interaction behavior, and component mapping must be logged
-Success criteria: the user can rotate the machine, inspect failing parts, and understand machine state visually.
+Success criteria: the user can rotate the machine, inspect failing parts, and understand machine state visually. 🔄 PARTIAL
 
 - [ ] **Milestone 7 — Autonomous collaborator polish**
 - [ ] `7.1` Report scheduler
