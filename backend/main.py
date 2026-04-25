@@ -1,40 +1,141 @@
-"""
-Stage 3 — Interact: FastAPI backend
-Milestones 1.1 (FastAPI service over SQLite historian) and
-           1.2 (query endpoints for latest state, history, scenario comparison)
-           1.3 (agentic chat with tool-calling LLM and structured response contract)
+from __future__ import annotations
 
-Run with:
-    uvicorn api:app --reload --port 8000
-"""
-
-import json
-import logging
+import os
 import sqlite3
+import sys
+from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Any, Annotated
 
-import anthropic as ant
+import numpy as np
+import torch
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# ── Milestone 1.5: logging ────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-    datefmt="%H:%M:%S",
-)
-log = logging.getLogger("copilot.api")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MODELS_DIR = PROJECT_ROOT / "models"
+MODELS_SRC_DIR = MODELS_DIR / "src"
+DB_PATH = MODELS_DIR / "data" / "simulation.db"
+ARTIFACTS_DIR = MODELS_DIR / "artifacts" / "models"
+DQN_PATH = MODELS_DIR / "data" / "dqn.pt"
 
-# ── DB path (relative to project root / models/) ─────────────────────────────
-DB_PATH = Path(__file__).parent.parent / "models" / "data" / "simulation.db"
+if str(MODELS_DIR) not in sys.path:
+    sys.path.insert(0, str(MODELS_DIR))
+if str(MODELS_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(MODELS_SRC_DIR))
+
+from src.dense_training_base import ClassifierConfig, DenseClassifier  # noqa: E402
+from src.rl_agent import DQN, compute_reward  # noqa: E402
+
+LABEL_TO_STATUS = {
+    0: "FUNCTIONAL",
+    1: "DEGRADED",
+    2: "CRITICAL",
+    3: "FAILED",
+}
+
+ACTION_LABELS = {
+    0: "do_nothing",
+    1: "light_service",
+    2: "full_maintenance",
+}
+
+ACTION_TO_MAINTENANCE = {
+    0: 0.0,
+    1: 0.5,
+    2: 1.0,
+}
+
+COMPONENTS = [
+    "blade",
+    "motor",
+    "rail",
+    "nozzle",
+    "resistor",
+    "cleaning",
+    "heater",
+    "sensor",
+    "insulation",
+]
+
+SUBSYSTEMS = {
+    "recoating": ["blade", "motor", "rail"],
+    "printhead": ["nozzle", "resistor", "cleaning"],
+    "thermal": ["heater", "sensor", "insulation"],
+}
+
+COMPONENT_META = {
+    "blade": {
+        "display": "Blade",
+        "subsystem": "Recoating",
+        "metric_field": "thickness_mm",
+        "metric_label": "thickness",
+        "unit": "mm",
+    },
+    "motor": {
+        "display": "Motor",
+        "subsystem": "Recoating",
+        "metric_field": "vibration_mm_s",
+        "metric_label": "vibration",
+        "unit": "mm/s",
+    },
+    "rail": {
+        "display": "Rail",
+        "subsystem": "Recoating",
+        "metric_field": "deviation_um",
+        "metric_label": "deviation",
+        "unit": "um",
+    },
+    "nozzle": {
+        "display": "Nozzle",
+        "subsystem": "Printhead",
+        "metric_field": "clog_probability",
+        "metric_label": "clog probability",
+        "unit": "",
+    },
+    "resistor": {
+        "display": "Resistor",
+        "subsystem": "Printhead",
+        "metric_field": "drift_pct",
+        "metric_label": "drift",
+        "unit": "%",
+    },
+    "cleaning": {
+        "display": "Cleaning",
+        "subsystem": "Printhead",
+        "metric_field": "efficiency",
+        "metric_label": "efficiency",
+        "unit": "",
+    },
+    "heater": {
+        "display": "Heater",
+        "subsystem": "Thermal",
+        "metric_field": "resistance_ohm",
+        "metric_label": "resistance",
+        "unit": "ohm",
+    },
+    "sensor": {
+        "display": "Sensor",
+        "subsystem": "Thermal",
+        "metric_field": "measurement_error_c",
+        "metric_label": "measurement error",
+        "unit": "C",
+    },
+    "insulation": {
+        "display": "Insulation",
+        "subsystem": "Thermal",
+        "metric_field": "thermal_resistance",
+        "metric_label": "thermal resistance",
+        "unit": "",
+    },
+}
 
 
-# ── DB dependency — read-only connection per request ─────────────────────────
-def get_db():
-    """Yields a read-only SQLite connection with row-dict access."""
-    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+def get_db() -> sqlite3.Connection:
+    if not DB_PATH.exists():
+        raise HTTPException(status_code=500, detail=f"Simulation DB not found: {DB_PATH}")
+    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -44,443 +145,38 @@ def get_db():
 
 DB = Annotated[sqlite3.Connection, Depends(get_db)]
 
-# ── FastAPI app ───────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="HP Metal Jet S100 — Digital Co-Pilot API",
-    description="Grounded historian service for Stage 3 (Milestone 1.1 / 1.2)",
-    version="0.1.0",
+    title="HP Metal Jet S100 Digital Co-Pilot API",
+    description="Phase 3 serving layer over joined Phase 1 classifiers and Phase 2 simulation/RL state.",
+    version="1.0.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://100.98.98.88:3000",
-        "http://100.98.98.88:3000",
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# ════════════════════════════════════════════════════════════════════════════════
-# Pydantic schemas
-# ════════════════════════════════════════════════════════════════════════════════
-
-
-class EnvironmentalDrivers(BaseModel):
-    temperature: float  # °C
-    humidity: float  # 0–1  (contamination proxy)
-    load: float  # cumulative simulated hours
-    maintenance_level: float  # 0–1
-    is_shock: bool
-
-
-# ── Per-component state models ────────────────────────────────────────────────
-
-
-class BladeState(BaseModel):
-    health: float
-    status: str
-    thickness_mm: float
-
-
-class MotorState(BaseModel):
-    health: float
-    status: str
-    vibration_mm_s: float
-
-
-class RailState(BaseModel):
-    health: float
-    status: str
-    deviation_um: float
-
-
-class NozzleState(BaseModel):
-    health: float
-    status: str
-    clog_probability: float
-
-
-class ResistorState(BaseModel):
-    health: float
-    status: str
-    drift_pct: float
-
-
-class CleaningState(BaseModel):
-    health: float
-    status: str
-    efficiency: float
-
-
-class HeaterState(BaseModel):
-    health: float
-    status: str
-    resistance_ohm: float
-
-
-class SensorState(BaseModel):
-    health: float
-    status: str
-    measurement_error_c: float
-
-
-class InsulationState(BaseModel):
-    health: float
-    status: str
-    thermal_resistance: float
-
-
-# ── Subsystem aggregates ──────────────────────────────────────────────────────
-
-
-class RecoatingSubsystem(BaseModel):
-    subsystem_health: float  # min(blade, motor, rail)
-    blade: BladeState
-    motor: MotorState
-    rail: RailState
-
-
-class PrintheadSubsystem(BaseModel):
-    subsystem_health: float  # min(nozzle, resistor, cleaning)
-    nozzle: NozzleState
-    resistor: ResistorState
-    cleaning: CleaningState
-
-
-class ThermalSubsystem(BaseModel):
-    subsystem_health: float  # min(heater, sensor, insulation)
-    heater: HeaterState
-    sensor: SensorState
-    insulation: InsulationState
-
-
-# ── Top-level machine state ───────────────────────────────────────────────────
-
-
-class MachineStateResponse(BaseModel):
-    # Identifiers / traceability (citation anchors for Stage 3 LLM layer)
-    scenario_id: str
-    run_number: int  # integer run_id inside the scenario (0–19)
-    t: int  # simulation tick (time step)
-    # Environmental context
-    drivers: EnvironmentalDrivers
-    # Subsystems
-    recoating: RecoatingSubsystem
-    printhead: PrintheadSubsystem
-    thermal: ThermalSubsystem
-
-
-# ── Compact row for history / comparison endpoints ────────────────────────────
-
-
-class HistoryRow(BaseModel):
-    t: int
-    temperature: float
-    humidity: float
-    health_recoating: float
-    health_printhead: float
-    health_thermal: float
-    status_blade: str
-    status_nozzle: str
-    status_heater: str
-
-
-class ScenarioMeta(BaseModel):
-    scenario_id: str
-    run_count: int
-    min_t: int
-    max_t: int
-
-
-# ════════════════════════════════════════════════════════════════════════════════
-# Helper: row → MachineStateResponse
-# ════════════════════════════════════════════════════════════════════════════════
-
-
-def _row_to_state(row: sqlite3.Row) -> MachineStateResponse:
-    r = dict(row)
-    return MachineStateResponse(
-        scenario_id=r["scenario_id"],
-        run_number=r["run_id"],
-        t=r["t"],
-        drivers=EnvironmentalDrivers(
-            temperature=r["temperature"],
-            humidity=r["humidity"],
-            load=r["load"],
-            maintenance_level=r["maintenance"],
-            is_shock=bool(r["is_shock"]),
-        ),
-        recoating=RecoatingSubsystem(
-            subsystem_health=r["health_recoating"],
-            blade=BladeState(
-                health=r["health_blade"],
-                status=r["status_blade"],
-                thickness_mm=r["metric_blade_mm"],
-            ),
-            motor=MotorState(
-                health=r["health_motor"],
-                status=r["status_motor"],
-                vibration_mm_s=r["metric_motor_vib"],
-            ),
-            rail=RailState(
-                health=r["health_rail"],
-                status=r["status_rail"],
-                deviation_um=r["metric_rail_dev"],
-            ),
-        ),
-        printhead=PrintheadSubsystem(
-            subsystem_health=r["health_printhead"],
-            nozzle=NozzleState(
-                health=r["health_nozzle"],
-                status=r["status_nozzle"],
-                clog_probability=r["metric_nozzle_clog"],
-            ),
-            resistor=ResistorState(
-                health=r["health_resistor"],
-                status=r["status_resistor"],
-                drift_pct=r["metric_resistor_pct"],
-            ),
-            cleaning=CleaningState(
-                health=r["health_cleaning"],
-                status=r["status_cleaning"],
-                efficiency=r["metric_cleaning_eff"],
-            ),
-        ),
-        thermal=ThermalSubsystem(
-            subsystem_health=r["health_thermal"],
-            heater=HeaterState(
-                health=r["health_heater"],
-                status=r["status_heater"],
-                resistance_ohm=r["metric_heater_ohm"],
-            ),
-            sensor=SensorState(
-                health=r["health_sensor"],
-                status=r["status_sensor"],
-                measurement_error_c=r["metric_sensor_err"],
-            ),
-            insulation=InsulationState(
-                health=r["health_insulation"],
-                status=r["status_insulation"],
-                thermal_resistance=r["metric_insulation_r"],
-            ),
-        ),
-    )
-
-
-# ════════════════════════════════════════════════════════════════════════════════
-# Endpoints
-# ════════════════════════════════════════════════════════════════════════════════
-
-
-@app.get("/api/scenarios", response_model=list[ScenarioMeta], tags=["Milestone 1.2"])
-def list_scenarios(db: DB):
-    """List all available scenarios with run counts and time range."""
-    log.info("GET /api/scenarios")
-    rows = db.execute(
-        """
-        SELECT scenario_id,
-               COUNT(DISTINCT run_id) AS run_count,
-               MIN(t)                 AS min_t,
-               MAX(t)                 AS max_t
-        FROM simulation_log
-        GROUP BY scenario_id
-        ORDER BY scenario_id
-        """
-    ).fetchall()
-    return [ScenarioMeta(**dict(r)) for r in rows]
-
-
-@app.get(
-    "/api/runs/{scenario_id}/state/latest",
-    response_model=MachineStateResponse,
-    tags=["Milestone 1.1"],
-)
-def get_latest_state(
-    scenario_id: str,
-    db: DB,
-    run_number: Optional[int] = Query(
-        default=None, description="Integer run index (0–19). Omit to use run_id=0."
-    ),
-):
-    """
-    Return the latest tick state for a given scenario_id (and optionally a specific run_number).
-
-    In Stage 3 citation format, scenario_id is what the brief calls 'run_id'
-    (e.g. 'chaos_run', 'baseline_nominal').  run_number is the integer replica index.
-    """
-    run_number = run_number if run_number is not None else 0
-    log.info("GET /api/runs/%s/state/latest  run_number=%d", scenario_id, run_number)
-
-    row = db.execute(
-        """
-        SELECT *
-        FROM simulation_log
-        WHERE scenario_id = ? AND run_id = ?
-        ORDER BY t DESC
-        LIMIT 1
-        """,
-        (scenario_id, run_number),
-    ).fetchone()
-
-    if row is None:
-        log.warning(
-            "  → 404: scenario_id=%s run_number=%d not found", scenario_id, run_number
-        )
-        raise HTTPException(
-            status_code=404,
-            detail=f"No data for scenario_id='{scenario_id}' run_number={run_number}",
-        )
-
-    state = _row_to_state(row)
-    log.info(
-        "  → t=%d  recoating=%.3f  printhead=%.3f  thermal=%.3f",
-        state.t,
-        state.recoating.subsystem_health,
-        state.printhead.subsystem_health,
-        state.thermal.subsystem_health,
-    )
-    return state
-
-
-@app.get(
-    "/api/runs/{scenario_id}/history",
-    response_model=list[HistoryRow],
-    tags=["Milestone 1.2"],
-)
-def get_history(
-    scenario_id: str,
-    db: DB,
-    run_number: int = Query(default=0, description="Integer run index (0–19)."),
-    start_t: int = Query(default=0, ge=0),
-    end_t: int = Query(default=999, ge=0),
-):
-    """
-    Return subsystem health over a time window for trend analysis and chart data.
-    Used by the dashboard and the Stage 3 LLM tool `get_subsystem_history`.
-    """
-    log.info(
-        "GET /api/runs/%s/history  run_number=%d  t=[%d,%d]",
-        scenario_id,
-        run_number,
-        start_t,
-        end_t,
-    )
-    rows = db.execute(
-        """
-        SELECT t, temperature, humidity,
-               health_recoating, health_printhead, health_thermal,
-               status_blade, status_nozzle, status_heater
-        FROM simulation_log
-        WHERE scenario_id = ? AND run_id = ? AND t BETWEEN ? AND ?
-        ORDER BY t
-        """,
-        (scenario_id, run_number, start_t, end_t),
-    ).fetchall()
-
-    if not rows:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No history for scenario_id='{scenario_id}' run_number={run_number} t=[{start_t},{end_t}]",
-        )
-
-    log.info("  → %d ticks returned", len(rows))
-    return [HistoryRow(**dict(r)) for r in rows]
-
-
-@app.get(
-    "/api/runs/{scenario_id}/state/at/{t}",
-    response_model=MachineStateResponse,
-    tags=["Milestone 1.2"],
-)
-def get_state_at(
-    scenario_id: str,
-    t: int,
-    db: DB,
-    run_number: int = Query(default=0),
-):
-    """Return the exact machine state at tick t (for citation lookup and evidence retrieval)."""
-    log.info("GET /api/runs/%s/state/at/%d  run_number=%d", scenario_id, t, run_number)
-
-    row = db.execute(
-        "SELECT * FROM simulation_log WHERE scenario_id = ? AND run_id = ? AND t = ?",
-        (scenario_id, run_number, t),
-    ).fetchone()
-
-    if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No row at scenario_id='{scenario_id}' run_number={run_number} t={t}",
-        )
-
-    return _row_to_state(row)
-
-
-@app.get(
-    "/api/compare",
-    response_model=dict[str, list[HistoryRow]],
-    tags=["Milestone 1.2"],
-)
-def compare_scenarios(
-    db: DB,
-    scenario_ids: list[str] = Query(description="Two or more scenario_ids to compare."),
-    run_number: int = Query(default=0),
-    start_t: int = Query(default=0, ge=0),
-    end_t: int = Query(default=999, ge=0),
-):
-    """
-    Return subsystem health time series for multiple scenarios side-by-side.
-    Used by the LLM tool `compare_runs` and the dashboard comparison chart.
-    """
-    log.info(
-        "GET /api/compare  scenarios=%s  run_number=%d  t=[%d,%d]",
-        scenario_ids,
-        run_number,
-        start_t,
-        end_t,
-    )
-    result: dict[str, list[HistoryRow]] = {}
-    for sid in scenario_ids:
-        rows = db.execute(
-            """
-            SELECT t, temperature, humidity,
-                   health_recoating, health_printhead, health_thermal,
-                   status_blade, status_nozzle, status_heater
-            FROM simulation_log
-            WHERE scenario_id = ? AND run_id = ? AND t BETWEEN ? AND ?
-            ORDER BY t
-            """,
-            (sid, run_number, start_t, end_t),
-        ).fetchall()
-        result[sid] = [HistoryRow(**dict(r)) for r in rows]
-    return result
-
-
-# ════════════════════════════════════════════════════════════════════════════════
-# Milestone 1.3 — Agentic Chat with Tool-Calling LLM
-# ════════════════════════════════════════════════════════════════════════════════
-
-# ── Pydantic schemas for chat ─────────────────────────────────────────────────
-
-
 class Citation(BaseModel):
     run_id: str
+    run_number: int = 0
     t: int
     field: str
-    value: float | str | None = None
+    value: float | str | int | bool | None = None
 
 
 class ChatRequest(BaseModel):
     message: str
     scenario_id: str = "baseline_nominal"
     run_number: int = 0
+    t: int | None = None
 
 
 class ChatResponse(BaseModel):
-    severity: str  # INFO | WARNING | CRITICAL
+    severity: str
     summary: str
     answer: str
     reasoning_summary: list[str]
@@ -488,392 +184,564 @@ class ChatResponse(BaseModel):
     recommended_actions: list[str]
 
 
-# ── Anthropic client (lazy singleton) ────────────────────────────────────────
+class ComponentClassifier:
+    def __init__(self, component: str, checkpoint_path: Path) -> None:
+        self.component = component
+        self.checkpoint_path = checkpoint_path
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        cfg_dict = checkpoint["config"]
+        cfg = ClassifierConfig(
+            input_dim=int(cfg_dict["input_dim"]),
+            output_dim=int(cfg_dict.get("output_dim", 4)),
+            hidden_dim=int(cfg_dict["hidden_dim"]),
+            dropout=float(cfg_dict["dropout"]),
+        )
+        self.feature_cols = list(checkpoint["feature_cols"])
+        self.mean = np.asarray(checkpoint["mean"], dtype=np.float32)
+        self.std = np.asarray(checkpoint["std"], dtype=np.float32)
+        self.model = DenseClassifier(cfg)
+        self.model.load_state_dict(checkpoint["state_dict"])
+        self.model.eval()
 
-_ant_client: ant.Anthropic | None = None
-
-
-def _get_ant() -> ant.Anthropic:
-    global _ant_client
-    if _ant_client is None:
-        _ant_client = ant.Anthropic()  # reads ANTHROPIC_API_KEY from env
-    return _ant_client
-
-
-# ── Tool implementations (read-only SQLite queries) ───────────────────────────
-
-
-def _tool_latest_state(
-    conn: sqlite3.Connection, scenario_id: str, run_number: int
-) -> dict:
-    row = conn.execute(
-        """
-        SELECT t, temperature, humidity, maintenance,
-               health_recoating, health_printhead, health_thermal,
-               health_blade, status_blade, metric_blade_mm,
-               health_motor, status_motor, metric_motor_vib,
-               health_rail,  status_rail,  metric_rail_dev,
-               health_nozzle,   status_nozzle,   metric_nozzle_clog,
-               health_resistor, status_resistor, metric_resistor_pct,
-               health_cleaning, status_cleaning, metric_cleaning_eff,
-               health_heater,    status_heater,    metric_heater_ohm,
-               health_sensor,    status_sensor,    metric_sensor_err,
-               health_insulation,status_insulation,metric_insulation_r
-        FROM simulation_log
-        WHERE scenario_id = ? AND run_id = ?
-        ORDER BY t DESC LIMIT 1
-        """,
-        (scenario_id, run_number),
-    ).fetchone()
-    if row is None:
+    def predict(self, feature_values: dict[str, float]) -> dict[str, Any]:
+        missing = [col for col in self.feature_cols if col not in feature_values]
+        if missing:
+            raise ValueError(f"{self.component} missing features: {', '.join(missing)}")
+        x_raw = np.asarray([[float(feature_values[col]) for col in self.feature_cols]], dtype=np.float32)
+        x = (x_raw - self.mean) / np.where(self.std < 1e-8, 1.0, self.std)
+        with torch.no_grad():
+            logits = self.model(torch.from_numpy(x))
+            probabilities = torch.softmax(logits, dim=1).numpy()[0]
+        label = int(np.argmax(probabilities))
         return {
-            "error": f"No data for scenario_id={scenario_id!r} run_number={run_number}"
+            "label": label,
+            "status": LABEL_TO_STATUS[label],
+            "confidence": round(float(probabilities[label]), 6),
+            "probabilities": {
+                LABEL_TO_STATUS[i]: round(float(probabilities[i]), 6)
+                for i in range(len(probabilities))
+            },
         }
-    return dict(row)
 
 
-def _tool_component_history(
+@lru_cache(maxsize=1)
+def get_classifiers() -> dict[str, ComponentClassifier]:
+    classifiers: dict[str, ComponentClassifier] = {}
+    for component in COMPONENTS:
+        path = ARTIFACTS_DIR / f"{component}_classifier.pt"
+        if not path.exists():
+            raise FileNotFoundError(f"Missing classifier checkpoint: {path}")
+        classifiers[component] = ComponentClassifier(component, path)
+    return classifiers
+
+
+@lru_cache(maxsize=1)
+def get_dqn() -> DQN:
+    if not DQN_PATH.exists():
+        raise FileNotFoundError(f"Missing DQN checkpoint: {DQN_PATH}")
+    model = DQN()
+    state_dict = torch.load(DQN_PATH, map_location="cpu", weights_only=False)
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model
+
+
+def _query_rows(conn: sqlite3.Connection, scenario_id: str, run_number: int, end_t: int) -> list[sqlite3.Row]:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM simulation_log
+        WHERE scenario_id = ? AND run_id = ? AND t BETWEEN 0 AND ?
+        ORDER BY t
+        """,
+        (scenario_id, run_number, end_t),
+    ).fetchall()
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No data for scenario_id={scenario_id!r} run_number={run_number}",
+        )
+    return rows
+
+
+def _base_state_report(row: sqlite3.Row, predictions: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    report: dict[str, Any] = {}
+    for component in COMPONENTS:
+        report[f"health_{component}"] = float(row[f"health_{component}"])
+        report[f"status_{component}"] = predictions[component]["status"]
+        report[f"label_{component}"] = predictions[component]["label"]
+    report["health_recoating"] = float(row["health_recoating"])
+    report["health_printhead"] = float(row["health_printhead"])
+    report["health_thermal"] = float(row["health_thermal"])
+    return report
+
+
+def _component_state(
+    row: sqlite3.Row,
+    component: str,
+    prediction: dict[str, Any],
+) -> dict[str, Any]:
+    metric_values = {
+        "blade": {"thickness_mm": row["metric_blade_mm"]},
+        "motor": {"vibration_mm_s": row["metric_motor_vib"]},
+        "rail": {"deviation_um": row["metric_rail_dev"]},
+        "nozzle": {"clog_probability": row["metric_nozzle_clog"]},
+        "resistor": {"drift_pct": row["metric_resistor_pct"]},
+        "cleaning": {"efficiency": row["metric_cleaning_eff"]},
+        "heater": {"resistance_ohm": row["metric_heater_ohm"]},
+        "sensor": {"measurement_error_c": row["metric_sensor_err"]},
+        "insulation": {"thermal_resistance": row["metric_insulation_r"]},
+    }
+    return {
+        "health": float(row[f"health_{component}"]),
+        "status": prediction["status"],
+        "label": prediction["label"],
+        "confidence": prediction["confidence"],
+        "probabilities": prediction["probabilities"],
+        **{key: float(value) for key, value in metric_values[component].items()},
+    }
+
+
+def _pick_dqn_action(report: dict[str, Any], steps_since_maintenance: int) -> int:
+    values = [float(report[f"health_{component}"]) for component in COMPONENTS]
+    values.append(min(steps_since_maintenance / 100.0, 1.0))
+    x = torch.tensor(values, dtype=torch.float32).unsqueeze(0)
+    with torch.no_grad():
+        return int(get_dqn()(x).argmax(dim=1).item())
+
+
+def _format_metric(value: float, unit: str) -> str:
+    if unit == "%":
+        return f"{value:.1f}%"
+    if unit:
+        return f"{value:.2f} {unit}"
+    return f"{value:.3f}"
+
+
+def _make_alerts(joined: dict[str, Any]) -> list[dict[str, Any]]:
+    alerts: list[dict[str, Any]] = []
+    component_lookup = {
+        "blade": joined["recoating"]["blade"],
+        "motor": joined["recoating"]["motor"],
+        "rail": joined["recoating"]["rail"],
+        "nozzle": joined["printhead"]["nozzle"],
+        "resistor": joined["printhead"]["resistor"],
+        "cleaning": joined["printhead"]["cleaning"],
+        "heater": joined["thermal"]["heater"],
+        "sensor": joined["thermal"]["sensor"],
+        "insulation": joined["thermal"]["insulation"],
+    }
+    for component, state in component_lookup.items():
+        status = state["status"]
+        if status == "FUNCTIONAL":
+            continue
+        severity = "CRITICAL" if status in {"CRITICAL", "FAILED"} else "WARNING"
+        meta = COMPONENT_META[component]
+        metric_value = float(state[meta["metric_field"]])
+        metric_text = _format_metric(metric_value, meta["unit"])
+        health_pct = state["health"] * 100.0
+        alerts.append(
+            {
+                "id": f"{joined['scenario_id']}-{joined['run_number']}-{joined['t']}-{component}",
+                "severity": severity,
+                "subsystem": meta["subsystem"],
+                "component": meta["display"],
+                "component_key": component,
+                "metric": metric_text,
+                "summary": (
+                    f"{meta['display']} is {status.lower()} at {health_pct:.1f}% health "
+                    f"({meta['metric_label']} {metric_text})."
+                ),
+                "reasoning": [
+                    f"Phase 1 classifier predicts {status} with {state['confidence'] * 100:.1f}% confidence.",
+                    f"Historian health for {component} is {health_pct:.1f}% at t={joined['t']}.",
+                    f"DQN recommends {joined['maintenance_recommendation']['action_label'].replace('_', ' ')} for this tick.",
+                ],
+                "actions": _recommended_actions(component, severity),
+                "query": f"Diagnose the {meta['display'].lower()} {status.lower()} condition at t={joined['t']}.",
+                "citations": [
+                    {
+                        "run_id": joined["scenario_id"],
+                        "run_number": joined["run_number"],
+                        "t": joined["t"],
+                        "field": f"health_{component}",
+                        "value": round(float(state["health"]), 6),
+                    },
+                    {
+                        "run_id": joined["scenario_id"],
+                        "run_number": joined["run_number"],
+                        "t": joined["t"],
+                        "field": f"status_{component}",
+                        "value": status,
+                    },
+                    {
+                        "run_id": joined["scenario_id"],
+                        "run_number": joined["run_number"],
+                        "t": joined["t"],
+                        "field": f"metric_{component}",
+                        "value": round(metric_value, 6),
+                    },
+                ],
+            }
+        )
+    severity_rank = {"CRITICAL": 0, "WARNING": 1}
+    return sorted(alerts, key=lambda alert: (severity_rank[alert["severity"]], alert["component"]))
+
+
+def _recommended_actions(component: str, severity: str) -> list[str]:
+    actions = {
+        "blade": ["Inspect recoater blade edge", "Reduce recoating speed", "Schedule blade replacement"],
+        "motor": ["Inspect motor bearings", "Check recoater alignment", "Lubricate drive assembly"],
+        "rail": ["Recalibrate guide rail", "Inspect build-bed alignment", "Check rail contamination"],
+        "nozzle": ["Run nozzle cleaning cycle", "Reduce humidity exposure", "Inspect nozzle plate"],
+        "resistor": ["Recalibrate firing voltage", "Inspect printhead contacts", "Schedule resistor check"],
+        "cleaning": ["Clean wiper assembly", "Run purge cycle", "Increase cleaning frequency"],
+        "heater": ["Trend heater resistance", "Inspect thermal wiring", "Schedule heater check"],
+        "sensor": ["Calibrate temperature sensor", "Check sensor drift", "Verify control loop readings"],
+        "insulation": ["Inspect insulation panels", "Check thermal leakage", "Schedule panel inspection"],
+    }[component]
+    if severity == "CRITICAL":
+        return actions
+    return actions[:2]
+
+
+# ── In-memory cache for joined rows ───────────────────────────────────────────
+# Cache stores full timelines keyed by (scenario_id, run_number, max_t)
+# This is efficient because each tick depends on previous state, so we must
+# compute sequentially from t=0. We cache the full result and slice as needed.
+
+_joined_rows_cache: dict[tuple[str, int, int], list[dict[str, Any]]] = {}
+
+
+def _compute_full_timeline(
+    conn: sqlite3.Connection,
+    scenario_id: str,
+    run_number: int,
+    end_t: int,
+) -> list[dict[str, Any]]:
+    """Compute full timeline from t=0 to end_t. Results are stored with t as index."""
+    rows = _query_rows(conn, scenario_id, run_number, end_t)
+    classifiers = get_classifiers()
+    prev_health = {component: 1.0 for component in COMPONENTS}
+    cumulative_shocks = 0
+    steps_since_maintenance = 0
+    previous_report: dict[str, Any] | None = None
+    all_joined: list[dict[str, Any]] = []
+
+    for row in rows:
+        if float(row["maintenance"] or 0.0) > 0:
+            steps_since_maintenance = 0
+        else:
+            steps_since_maintenance += 1
+        if bool(row["is_shock"]):
+            cumulative_shocks += 1
+
+        feature_values: dict[str, float] = {
+            "temperature": float(row["temperature"]),
+            "humidity": float(row["humidity"]),
+            "load": float(row["load"]),
+            "maintenance": float(row["maintenance"] or 0.0),
+            "is_shock": float(row["is_shock"] or 0),
+            "steps_since_maintenance": float(steps_since_maintenance),
+            "cumulative_shocks": float(cumulative_shocks),
+        }
+        for component in COMPONENTS:
+            feature_values[f"health_prev_{component}"] = float(prev_health[component])
+
+        predictions = {
+            component: classifiers[component].predict(feature_values)
+            for component in COMPONENTS
+        }
+        report = _base_state_report(row, predictions)
+        action = _pick_dqn_action(report, steps_since_maintenance)
+        reward = compute_reward(report, action, previous_report)
+        maintenance_level = ACTION_TO_MAINTENANCE[action]
+
+        joined = {
+            "scenario_id": row["scenario_id"],
+            "run_number": int(row["run_id"]),
+            "t": int(row["t"]),
+            "drivers": {
+                "temperature": float(row["temperature"]),
+                "humidity": float(row["humidity"]),
+                "load": float(row["load"]),
+                "maintenance_level": float(row["maintenance"] or 0.0),
+                "is_shock": bool(row["is_shock"]),
+                "steps_since_maintenance": steps_since_maintenance,
+                "cumulative_shocks": cumulative_shocks,
+            },
+            "recoating": {
+                "subsystem_health": float(row["health_recoating"]),
+                "blade": _component_state(row, "blade", predictions["blade"]),
+                "motor": _component_state(row, "motor", predictions["motor"]),
+                "rail": _component_state(row, "rail", predictions["rail"]),
+            },
+            "printhead": {
+                "subsystem_health": float(row["health_printhead"]),
+                "nozzle": _component_state(row, "nozzle", predictions["nozzle"]),
+                "resistor": _component_state(row, "resistor", predictions["resistor"]),
+                "cleaning": _component_state(row, "cleaning", predictions["cleaning"]),
+            },
+            "thermal": {
+                "subsystem_health": float(row["health_thermal"]),
+                "heater": _component_state(row, "heater", predictions["heater"]),
+                "sensor": _component_state(row, "sensor", predictions["sensor"]),
+                "insulation": _component_state(row, "insulation", predictions["insulation"]),
+            },
+            "model_predictions": predictions,
+            "maintenance_recommendation": {
+                "action": action,
+                "action_label": ACTION_LABELS[action],
+                "maintenance_level": maintenance_level,
+                "reward": round(float(reward), 6),
+            },
+        }
+        joined["alerts"] = _make_alerts(joined)
+        all_joined.append(joined)
+
+        for component in COMPONENTS:
+            prev_health[component] = float(row[f"health_{component}"])
+        previous_report = report
+
+    return all_joined
+
+
+def _build_joined_rows(
     conn: sqlite3.Connection,
     scenario_id: str,
     run_number: int,
     start_t: int,
     end_t: int,
-) -> list[dict]:
-    rows = conn.execute(
-        """
-        SELECT t,
-               health_recoating, health_printhead, health_thermal,
-               health_blade, health_motor, health_rail,
-               health_nozzle, health_resistor, health_cleaning,
-               health_heater, health_sensor, health_insulation,
-               status_blade, status_motor, status_rail,
-               status_nozzle, status_resistor, status_cleaning,
-               status_heater, status_sensor, status_insulation,
-               temperature, humidity
-        FROM simulation_log
-        WHERE scenario_id = ? AND run_id = ? AND t BETWEEN ? AND ?
-        ORDER BY t
-        LIMIT 200
-        """,
-        (scenario_id, run_number, start_t, end_t),
-    ).fetchall()
-    return [dict(r) for r in rows]
+) -> list[dict[str, Any]]:
+    """
+    Build joined rows for the specified range. Uses caching for efficiency.
+
+    Since each tick depends on previous state, we must compute from t=0.
+    We cache the full timeline up to end_t and slice the requested range.
+    """
+    cache_key = (scenario_id, run_number, end_t)
+
+    # Check if we have cached results for this timeline
+    if cache_key not in _joined_rows_cache:
+        # Compute and cache the full timeline
+        _joined_rows_cache[cache_key] = _compute_full_timeline(conn, scenario_id, run_number, end_t)
+
+    # Return the requested slice
+    full_timeline = _joined_rows_cache[cache_key]
+    return [row for row in full_timeline if start_t <= row["t"] <= end_t]
 
 
-def _tool_threshold_crossing(
-    conn: sqlite3.Connection,
-    scenario_id: str,
-    run_number: int,
-    component: str,
-    threshold: float,
-) -> dict:
-    col = f"health_{component}"
-    row = conn.execute(
-        f"SELECT t, {col} FROM simulation_log "  # noqa: S608
-        "WHERE scenario_id = ? AND run_id = ? AND "
-        f"{col} < ? ORDER BY t ASC LIMIT 1",
-        (scenario_id, run_number, threshold),
-    ).fetchone()
-    if row is None:
-        return {
-            "crossed": False,
-            "message": f"{component} never dropped below {threshold}",
-        }
+def _state_at(conn: sqlite3.Connection, scenario_id: str, run_number: int, t: int) -> dict[str, Any]:
+    rows = _build_joined_rows(conn, scenario_id, run_number, t, t)
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No row at scenario_id={scenario_id!r} run_number={run_number} t={t}",
+        )
+    return rows[0]
+
+
+@app.get("/api/health")
+def health() -> dict[str, Any]:
+    classifier_count = len(list(ARTIFACTS_DIR.glob("*_classifier.pt"))) if ARTIFACTS_DIR.exists() else 0
+    loaded_classifiers = False
+    loaded_dqn = False
+    classifier_error = None
+    dqn_error = None
+    try:
+        loaded_classifiers = len(get_classifiers()) == len(COMPONENTS)
+    except Exception as exc:  # pragma: no cover - health endpoint should expose the issue
+        classifier_error = str(exc)
+    try:
+        loaded_dqn = get_dqn() is not None
+    except Exception as exc:  # pragma: no cover
+        dqn_error = str(exc)
     return {
-        "crossed": True,
-        "component": component,
-        "threshold": threshold,
-        "t": row["t"],
-        "health": row[col],
+        "status": "ok" if DB_PATH.exists() and loaded_classifiers and loaded_dqn else "degraded",
+        "db_path": str(DB_PATH),
+        "db_exists": DB_PATH.exists(),
+        "classifier_artifacts": classifier_count,
+        "classifiers_loaded": loaded_classifiers,
+        "classifier_error": classifier_error,
+        "dqn_path": str(DQN_PATH),
+        "dqn_loaded": loaded_dqn,
+        "dqn_error": dqn_error,
+        "cache_entries": len(_joined_rows_cache),
+        "cache_keys": list(_joined_rows_cache.keys()),
     }
 
 
-# ── Tool definitions sent to the LLM ─────────────────────────────────────────
-
-_TOOLS: list[dict] = [
-    {
-        "name": "get_latest_state",
-        "description": (
-            "Return the latest full machine-state snapshot for a scenario run: "
-            "all 9 component health values, status strings, and sensor metrics. "
-            "Always call this first to get the current picture."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "scenario_id": {
-                    "type": "string",
-                    "description": "e.g. 'baseline_nominal'",
-                },
-                "run_number": {
-                    "type": "integer",
-                    "description": "Integer replica index (0–19)",
-                    "default": 0,
-                },
-            },
-            "required": ["scenario_id"],
-        },
-    },
-    {
-        "name": "get_component_history",
-        "description": (
-            "Return per-tick health values for all 9 components over a time window. "
-            "Use to detect degradation trends or compare pre/post-event states. "
-            "Returns at most 200 ticks."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "scenario_id": {"type": "string"},
-                "run_number": {"type": "integer", "default": 0},
-                "start_t": {"type": "integer", "default": 0},
-                "end_t": {"type": "integer", "default": 999},
-            },
-            "required": ["scenario_id"],
-        },
-    },
-    {
-        "name": "find_threshold_crossing",
-        "description": (
-            "Find the first simulation tick where a specific component's health dropped below "
-            "a threshold. Useful for estimating time-to-failure or maintenance windows."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "scenario_id": {"type": "string"},
-                "run_number": {"type": "integer", "default": 0},
-                "component": {
-                    "type": "string",
-                    "enum": [
-                        "blade",
-                        "motor",
-                        "rail",
-                        "nozzle",
-                        "resistor",
-                        "cleaning",
-                        "heater",
-                        "sensor",
-                        "insulation",
-                    ],
-                },
-                "threshold": {
-                    "type": "number",
-                    "description": "Health threshold 0.0–1.0",
-                },
-            },
-            "required": ["scenario_id", "component", "threshold"],
-        },
-    },
-    {
-        "name": "produce_response",
-        "description": (
-            "Emit the final structured response. Call this EXACTLY ONCE when you have "
-            "retrieved all necessary data and are ready to answer the user."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "severity": {
-                    "type": "string",
-                    "enum": ["INFO", "WARNING", "CRITICAL"],
-                    "description": "CRITICAL if any component is FAILED; WARNING if any health<0.7; else INFO.",
-                },
-                "summary": {
-                    "type": "string",
-                    "description": "One-sentence summary ≤140 characters.",
-                },
-                "answer": {
-                    "type": "string",
-                    "description": "Full markdown answer to the user's question, grounded in tool data.",
-                },
-                "reasoning_summary": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "3–5 bullet points tracing the analysis chain.",
-                },
-                "citations": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "run_id": {"type": "string"},
-                            "t": {"type": "integer"},
-                            "field": {"type": "string"},
-                            "value": {
-                                "description": "Raw numeric or string value at this tick."
-                            },
-                        },
-                        "required": ["run_id", "t", "field"],
-                    },
-                },
-                "recommended_actions": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Specific, actionable maintenance steps.",
-                },
-            },
-            "required": [
-                "severity",
-                "summary",
-                "answer",
-                "reasoning_summary",
-                "citations",
-                "recommended_actions",
-            ],
-        },
-    },
-]
-
-_SYSTEM_PROMPT = """\
-You are the HP Metal Jet S100 Digital Co-Pilot — an expert predictive-maintenance AI.
-
-You have exclusive access to real-time historian data through the provided tools.
-
-RULES (non-negotiable):
-1. NEVER state a health value or status without first retrieving it via a tool.
-2. Cite every data point: record scenario_id as run_id, the exact tick (t), and the field name.
-3. When you have sufficient data to answer, call produce_response EXACTLY ONCE.
-4. Severity: CRITICAL if any component status is FAILED; WARNING if any health < 0.7; else INFO.
-5. reasoning_summary: 3–5 concise bullet points tracing your analysis chain.
-6. recommended_actions: specific, actionable steps (e.g. "Replace blade — thickness 0.41 mm at t=87").
-
-Subsystems and components:
-• Recoating : blade, motor, rail
-• Printhead  : nozzle, resistor, cleaning
-• Thermal    : heater, sensor, insulation
-"""
+@app.post("/api/cache/clear")
+def clear_cache() -> dict[str, Any]:
+    """Clear the in-memory joined rows cache. Useful for development."""
+    cleared_count = len(_joined_rows_cache)
+    _joined_rows_cache.clear()
+    return {
+        "status": "ok",
+        "message": f"Cleared {cleared_count} cache entries",
+    }
 
 
-# ── Endpoint ──────────────────────────────────────────────────────────────────
+@app.get("/api/scenarios")
+def list_scenarios(db: DB) -> list[dict[str, Any]]:
+    rows = db.execute(
+        """
+        SELECT scenario_id,
+               COUNT(DISTINCT run_id) AS run_count,
+               MIN(t) AS min_t,
+               MAX(t) AS max_t,
+               COUNT(*) AS row_count
+        FROM simulation_log
+        GROUP BY scenario_id
+        ORDER BY scenario_id
+        """
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
-@app.post("/api/chat", response_model=ChatResponse, tags=["Milestone 1.3"])
-def chat(req: ChatRequest):
-    """Agentic chat: LLM with tool use grounded in the historian DB."""
-    log.info(
-        "POST /api/chat  scenario=%s run=%d  q=%r",
-        req.scenario_id,
-        req.run_number,
-        req.message[:80],
+@app.get("/api/runs/{scenario_id}/timeline")
+def get_timeline(
+    scenario_id: str,
+    db: DB,
+    run_number: int = Query(default=0, ge=0),
+    start_t: int = Query(default=0, ge=0),
+    end_t: int = Query(default=999, ge=0),
+) -> list[dict[str, Any]]:
+    if end_t < start_t:
+        raise HTTPException(status_code=400, detail="end_t must be >= start_t")
+    return _build_joined_rows(db, scenario_id, run_number, start_t, end_t)
+
+
+@app.get("/api/runs/{scenario_id}/state/at/{t}")
+def get_state_at(
+    scenario_id: str,
+    t: int,
+    db: DB,
+    run_number: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    return _state_at(db, scenario_id, run_number, t)
+
+
+@app.get("/api/runs/{scenario_id}/state/latest")
+def get_latest_state(
+    scenario_id: str,
+    db: DB,
+    run_number: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    row = db.execute(
+        "SELECT MAX(t) AS max_t FROM simulation_log WHERE scenario_id = ? AND run_id = ?",
+        (scenario_id, run_number),
+    ).fetchone()
+    if row is None or row["max_t"] is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return _state_at(db, scenario_id, run_number, int(row["max_t"]))
+
+
+@app.get("/api/runs/{scenario_id}/alerts/at/{t}")
+def get_alerts_at(
+    scenario_id: str,
+    t: int,
+    db: DB,
+    run_number: int = Query(default=0, ge=0),
+) -> list[dict[str, Any]]:
+    return _state_at(db, scenario_id, run_number, t)["alerts"]
+
+
+@app.get("/api/runs/{scenario_id}/history")
+def get_history(
+    scenario_id: str,
+    db: DB,
+    run_number: int = Query(default=0, ge=0),
+    start_t: int = Query(default=0, ge=0),
+    end_t: int = Query(default=999, ge=0),
+) -> list[dict[str, Any]]:
+    timeline = _build_joined_rows(db, scenario_id, run_number, start_t, end_t)
+    return [
+        {
+            "t": row["t"],
+            "temperature": row["drivers"]["temperature"],
+            "humidity": row["drivers"]["humidity"],
+            "health_recoating": row["recoating"]["subsystem_health"],
+            "health_printhead": row["printhead"]["subsystem_health"],
+            "health_thermal": row["thermal"]["subsystem_health"],
+            "status_blade": row["recoating"]["blade"]["status"],
+            "status_nozzle": row["printhead"]["nozzle"]["status"],
+            "status_heater": row["thermal"]["heater"]["status"],
+            "health_blade": row["recoating"]["blade"]["health"],
+            "health_motor": row["recoating"]["motor"]["health"],
+            "health_rail": row["recoating"]["rail"]["health"],
+            "health_nozzle": row["printhead"]["nozzle"]["health"],
+            "health_resistor": row["printhead"]["resistor"]["health"],
+            "health_cleaning": row["printhead"]["cleaning"]["health"],
+            "health_heater": row["thermal"]["heater"]["health"],
+            "health_sensor": row["thermal"]["sensor"]["health"],
+            "health_insulation": row["thermal"]["insulation"]["health"],
+        }
+        for row in timeline
+    ]
+
+
+@app.post("/api/chat", response_model=ChatResponse)
+def chat(req: ChatRequest, db: DB) -> ChatResponse:
+    row = (
+        _state_at(db, req.scenario_id, req.run_number, req.t)
+        if req.t is not None
+        else get_latest_state(req.scenario_id, db, req.run_number)
     )
+    alerts = row["alerts"]
+    top_alert = alerts[0] if alerts else None
+    severity = top_alert["severity"] if top_alert else "INFO"
+    maintenance = row["maintenance_recommendation"]
 
-    client = _get_ant()
-    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-
-    messages: list[dict] = [{"role": "user", "content": req.message}]
-
-    try:
-        for iteration in range(10):
-            resp = client.messages.create(
-                model="claude-opus-4-7",
-                max_tokens=4096,
-                thinking={"type": "adaptive"},
-                system=[
-                    {
-                        "type": "text",
-                        "text": _SYSTEM_PROMPT,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-                tools=_TOOLS,
-                messages=messages,
+    if top_alert:
+        summary = top_alert["summary"][:140]
+        answer = (
+            f"At t={row['t']}, the highest-priority issue is {top_alert['component']} in the "
+            f"{top_alert['subsystem']} subsystem. {top_alert['summary']} "
+            f"The DQN policy recommends {maintenance['action_label'].replace('_', ' ')} "
+            f"(maintenance level {maintenance['maintenance_level']})."
+        )
+        reasoning = top_alert["reasoning"]
+        citations = [Citation(**citation) for citation in top_alert["citations"]]
+        actions = top_alert["actions"]
+    else:
+        summary = "All monitored components are functional."
+        answer = (
+            f"At t={row['t']}, Phase 1 predicts all monitored components as functional. "
+            f"The DQN policy recommends {maintenance['action_label'].replace('_', ' ')}."
+        )
+        reasoning = [
+            "No backend alerts are active for this tick.",
+            "All Phase 1 component classifiers returned FUNCTIONAL.",
+            f"DQN selected action {maintenance['action']} ({maintenance['action_label']}).",
+        ]
+        citations = [
+            Citation(
+                run_id=row["scenario_id"],
+                run_number=row["run_number"],
+                t=row["t"],
+                field="health_recoating",
+                value=row["recoating"]["subsystem_health"],
             )
-            log.info("  iter=%d stop_reason=%s", iteration, resp.stop_reason)
+        ]
+        actions = ["Continue monitoring", "Keep current maintenance plan"]
 
-            # Preserve full content (including thinking blocks) for next turn
-            messages.append({"role": "assistant", "content": resp.content})
-
-            if resp.stop_reason == "end_turn":
-                raise HTTPException(
-                    500, detail="LLM ended without calling produce_response"
-                )
-
-            if resp.stop_reason != "tool_use":
-                raise HTTPException(
-                    500, detail=f"Unexpected stop_reason: {resp.stop_reason!r}"
-                )
-
-            tool_results: list[dict] = []
-            final_payload: dict | None = None
-
-            for block in resp.content:
-                if block.type != "tool_use":
-                    continue
-
-                name = block.name
-                inp = block.input
-                sc = inp.get("scenario_id", req.scenario_id)
-                run = int(inp.get("run_number", req.run_number))
-
-                if name == "produce_response":
-                    final_payload = inp
-                    tool_results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": "Response recorded.",
-                        }
-                    )
-                    break  # done — don't execute further tools this turn
-
-                try:
-                    if name == "get_latest_state":
-                        result = _tool_latest_state(conn, sc, run)
-                    elif name == "get_component_history":
-                        result = _tool_component_history(
-                            conn,
-                            sc,
-                            run,
-                            int(inp.get("start_t", 0)),
-                            int(inp.get("end_t", 999)),
-                        )
-                    elif name == "find_threshold_crossing":
-                        result = _tool_threshold_crossing(
-                            conn,
-                            sc,
-                            run,
-                            inp["component"],
-                            float(inp["threshold"]),
-                        )
-                    else:
-                        result = {"error": f"Unknown tool: {name!r}"}
-                except Exception as exc:
-                    result = {"error": str(exc)}
-
-                log.info("    tool=%s → %s", name, str(result)[:120])
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": json.dumps(result, default=str),
-                    }
-                )
-
-            if final_payload is not None:
-                return ChatResponse(
-                    severity=final_payload["severity"],
-                    summary=final_payload["summary"],
-                    answer=final_payload["answer"],
-                    reasoning_summary=final_payload.get("reasoning_summary", []),
-                    citations=[
-                        Citation(
-                            run_id=c.get("run_id", req.scenario_id),
-                            t=c["t"],
-                            field=c["field"],
-                            value=c.get("value"),
-                        )
-                        for c in final_payload.get("citations", [])
-                    ],
-                    recommended_actions=final_payload.get("recommended_actions", []),
-                )
-
-            messages.append({"role": "user", "content": tool_results})
-
-        raise HTTPException(
-            500, detail="Agentic loop exhausted without produce_response"
+    # The deterministic path is intentionally used when no provider key is present.
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        return ChatResponse(
+            severity=severity,
+            summary=summary,
+            answer=answer,
+            reasoning_summary=reasoning[:5],
+            citations=citations,
+            recommended_actions=actions,
         )
 
-    finally:
-        conn.close()
+    return ChatResponse(
+        severity=severity,
+        summary=summary,
+        answer=answer,
+        reasoning_summary=reasoning[:5],
+        citations=citations,
+        recommended_actions=actions,
+    )
