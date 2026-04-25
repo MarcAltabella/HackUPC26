@@ -1,26 +1,44 @@
 from __future__ import annotations
 
-import pickle
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
+import torch
 
-from .generate_dataset import (
-    BLADE_INIT_MM,
-    HEATER_R_NOMINAL,
-    INSUL_R_MAX,
-    MOTOR_V_NOMINAL,
-    Phase1State,
-    STATUS_MAP,
-    Historian,
-    SimulationConfig,
-    _SCENARIO_SEED,
-    _maintenance_level,
-    sample_drivers,
-    step_phase1,
-)
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+try:
+    from .generate_dataset import (
+        BLADE_INIT_MM,
+        HEATER_R_NOMINAL,
+        INSUL_R_MAX,
+        MOTOR_V_NOMINAL,
+        Phase1State,
+        STATUS_MAP,
+        Historian,
+        SimulationConfig,
+        _SCENARIO_SEED,
+        _maintenance_level,
+        sample_drivers,
+        step_phase1,
+    )
+except ImportError:
+    from generate_dataset import (
+        BLADE_INIT_MM,
+        HEATER_R_NOMINAL,
+        INSUL_R_MAX,
+        MOTOR_V_NOMINAL,
+        Phase1State,
+        STATUS_MAP,
+        Historian,
+        SimulationConfig,
+        _SCENARIO_SEED,
+        _maintenance_level,
+        sample_drivers,
+        step_phase1,
+    )
 
 SUBSYSTEMS: dict[str, tuple[str, ...]] = {
     "recoating": ("blade", "motor", "rail"),
@@ -100,7 +118,7 @@ def compute_reward(
 
 
 def update_q(
-    q_table: np.ndarray,
+    q_table: torch.Tensor,
     state: tuple[int, int, int, int],
     action: int,
     reward: float,
@@ -109,25 +127,23 @@ def update_q(
     gamma: float = 0.99,
     done: bool = False,
 ) -> None:
-    best_next = 0.0 if done else float(np.max(q_table[next_state]))
+    best_next = 0.0 if done else float(q_table[next_state].max().item())
     td_target = reward + gamma * best_next
-    q_table[state][action] += alpha * (td_target - q_table[state][action])
+    q_table[state][action] += alpha * (td_target - q_table[state][action].item())
 
 
-def init_q_table() -> np.ndarray:
-    return np.zeros((5, 5, 5, 3, 3), dtype=np.float32)
+def init_q_table() -> torch.Tensor:
+    return torch.zeros((5, 5, 5, 3, 3), dtype=torch.float32, device=DEVICE)
 
 
-def save_q_table(q_table: np.ndarray, path: str | Path) -> None:
+def save_q_table(q_table: torch.Tensor, path: str | Path) -> None:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("wb") as handle:
-        pickle.dump(q_table, handle)
+    torch.save(q_table, output_path)
 
 
-def load_q_table(path: str | Path) -> np.ndarray:
-    with Path(path).open("rb") as handle:
-        return pickle.load(handle)
+def load_q_table(path: str | Path) -> torch.Tensor:
+    return torch.load(Path(path), map_location=DEVICE, weights_only=True)
 
 
 def get_epsilon(
@@ -142,7 +158,7 @@ def get_epsilon(
 
 
 def pick_action(
-    q_table: np.ndarray,
+    q_table: torch.Tensor,
     state: tuple[int, int, int, int],
     epsilon: float,
     rng: np.random.Generator | None = None,
@@ -150,7 +166,7 @@ def pick_action(
     sampler = rng if rng is not None else np.random.default_rng()
     if float(sampler.random()) < epsilon:
         return int(sampler.integers(3))
-    return int(np.argmax(q_table[state]))
+    return int(q_table[state].argmax().item())
 
 
 def action_to_maintenance_level(action: int) -> float:
@@ -224,7 +240,7 @@ def initial_state_report() -> dict[str, Any]:
 def run_rl_episode(
     cfg: SimulationConfig,
     run_id: int,
-    q_table: np.ndarray,
+    q_table: torch.Tensor,
     *,
     training: bool = False,
     epsilon: float = 0.0,
@@ -288,7 +304,7 @@ def _run_episode(
         tuple[int, float],
     ],
     *,
-    q_table: np.ndarray | None = None,
+    q_table: torch.Tensor | None = None,
     training: bool = False,
     alpha: float = 0.1,
     gamma: float = 0.99,
@@ -360,6 +376,7 @@ def _run_episode(
 
 __all__ = [
     "ACTION_TO_MAINTENANCE_LEVEL",
+    "DEVICE",
     "EpisodeResult",
     "RLConfig",
     "action_to_maintenance_level",

@@ -1,19 +1,31 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
-from .generate_dataset import PROJECT_ROOT, SCENARIOS, SimulationConfig
-from .rl_agent import (
-    RLConfig,
-    get_epsilon,
-    init_q_table,
-    load_q_table,
-    run_rl_episode,
-    save_q_table,
-)
+try:
+    from .generate_dataset import PROJECT_ROOT, SCENARIOS, SimulationConfig
+    from .rl_agent import (
+        DEVICE,
+        RLConfig,
+        get_epsilon,
+        init_q_table,
+        load_q_table,
+        run_rl_episode,
+        save_q_table,
+    )
+except ImportError:
+    from generate_dataset import PROJECT_ROOT, SCENARIOS, SimulationConfig
+    from rl_agent import (
+        DEVICE,
+        RLConfig,
+        get_epsilon,
+        init_q_table,
+        load_q_table,
+        run_rl_episode,
+        save_q_table,
+    )
 
 
 DEFAULT_Q_TABLE_PATH = PROJECT_ROOT / "data" / "q_table.pkl"
@@ -101,6 +113,8 @@ def main() -> None:
     args.q_table_path = resolve_project_path(args.q_table_path)
     args.log_path = resolve_project_path(args.log_path)
     scenarios = select_scenarios(args.scenarios)
+
+    print(f"[train] device={DEVICE}")
 
     if args.resume and args.q_table_path.exists():
         q_table = load_q_table(args.q_table_path)
