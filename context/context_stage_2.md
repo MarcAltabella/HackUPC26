@@ -410,14 +410,14 @@ Run two or more `SimulationConfig` instances with different profiles. Tag each w
 - [x] `1.5` Logging rule: every implemented driver profile, threshold, and scenario assumption must be written to a running implementation log
 Success criteria: the system can generate synthetic driver values at every tick for multiple scenario types.
 
-- [ ] **Milestone 2 — Phase 1 integration**
+- [x] **Milestone 2 — Phase 1 integration**
 - [x] `2.1` Connect the Clock to the Phase 1 engine
 - [x] `2.2` Pass generated drivers into Phase 1 at each tick
 - [x] `2.3` Standardize the returned state report structure across all modeled components
 - [x] `2.4` Stop conditions for end-of-run or component failure
 Success criteria: each time step produces a valid machine state from the Phase 1 engine.
 
-- [ ] **Milestone 3 — Historian and persistence**
+- [x] **Milestone 3 — Historian and persistence**
 - [x] `3.1` Create SQLite schema for `simulation_log`
 - [x] `3.2` Implement tick-by-tick persistence
 - [x] `3.3` Add scenario/run tagging for comparison
@@ -434,10 +434,10 @@ Success criteria: every simulation tick is stored and queryable by run and times
 Success criteria: multiple scenarios can be executed and compared consistently.
 
 - [ ] **Milestone 5 — RL maintenance agent**
-- [ ] `5.1` Implement subsystem-aggregated state discretisation
-- [ ] `5.2` Implement action selection and reward calculation
-- [ ] `5.3` Implement Q-table update and persistence
-- [ ] `5.4` Integrate RL actions back into the Clock through `maintenance_level`
+- [x] `5.1` Implement subsystem-aggregated state discretisation
+- [x] `5.2` Implement action selection and reward calculation
+- [x] `5.3` Implement Q-table update and persistence
+- [x] `5.4` Integrate RL actions back into the Clock through `maintenance_level`
 - [ ] `5.5` Logging rule: reward shaping, action semantics, and RL state design decisions must be written to the implementation log
 Success criteria: the RL agent can train and deploy against the simulation loop.
 
