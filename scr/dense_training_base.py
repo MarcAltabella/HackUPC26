@@ -1,45 +1,68 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
+from enum import StrEnum
 
 import torch
-from torch import Tensor, nn
-from torch.utils.data import DataLoader
+from torch import nn
 
 
-@dataclass
-class TrainConfig:
-    input_dim: int
-    output_dim: int
-    hidden_dim: int = 128
-    dropout: float = 0.2
-    batch_size: int = 64
-    epochs: int = 50
+class OperationalStatus(StrEnum):
+    FUNCTIONAL = "FUNCTIONAL"
+    DEGRADED = "DEGRADED"
+    CRITICAL = "CRITICAL"
+    FAILED = "FAILED"
+
+
+@dataclass(frozen=True)
+class DriverVector:
+    """Input contract for environmental and operational drivers."""
+
+    temperature_stress: float
+    humidity_contamination: float
+    operational_load: float
+    maintenance_level: float
+
+
+@dataclass(frozen=True)
+class ComponentReport:
+    """Output contract for each component telemetry report."""
+
+    component: str
+    health_index: float
+    operational_status: OperationalStatus
+    metrics: dict[str, float]
+
+
+@dataclass(frozen=True)
+class OptimizerConfig:
     lr: float = 1e-3
     weight_decay: float = 1e-4
-    patience: int = 8
-    grad_clip: float = 1.0
-    seed: int = 42
 
 
-class DenseModel(nn.Module):
-    def __init__(
-        self, input_dim: int, hidden_dim: int, output_dim: int, dropout: float
-    ) -> None:
+class DenseTrainingBase(nn.Module):
+    """
+    Shared architecture for all HP S100 component models.
+
+    It mixes deterministic physics-inspired degradation with a small dense
+    correction head so all components share the same optimization/training
+    interface when data-driven fine-tuning is needed.
+    """
+
+    def __init__(self, component_name: str, hidden_dim: int = 32, dropout: float = 0.1):
         super().__init__()
+        self.component_name = component_name
 
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
+        # Shared neural correction block: [temp, humidity, load, maintenance].
+        self.correction_net = nn.Sequential(
+            nn.Linear(4, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, output_dim),
+            nn.Linear(hidden_dim // 2, 1),
+            nn.Tanh(),
         )
-
         self._init_weights()
 
     def _init_weights(self) -> None:
@@ -48,128 +71,72 @@ class DenseModel(nn.Module):
                 nn.init.kaiming_uniform_(module.weight, nonlinearity="relu")
                 nn.init.zeros_(module.bias)
 
-    def forward(self, x: Tensor) -> Tensor:
-        return self.net(x)
+    @staticmethod
+    def build_optimizer(model: nn.Module, cfg: OptimizerConfig) -> torch.optim.Optimizer:
+        return torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
+    @staticmethod
+    def _clamp01(value: float) -> float:
+        return float(max(0.0, min(1.0, value)))
 
-def build_dataloaders(cfg: TrainConfig) -> Tuple[DataLoader, DataLoader]:
-    """
-    Reemplaza esta función con tu pipeline real de dataset.
+    @staticmethod
+    def _status_from_health(health: float) -> OperationalStatus:
+        if health <= 0.15:
+            return OperationalStatus.FAILED
+        if health <= 0.35:
+            return OperationalStatus.CRITICAL
+        if health <= 0.70:
+            return OperationalStatus.DEGRADED
+        return OperationalStatus.FUNCTIONAL
 
-    Esperado:
-    - train_loader: batches de (x, y)
-    - val_loader: batches de (x, y)
+    @staticmethod
+    def _exp_decay(stress: float, alpha: float) -> float:
+        return float(torch.exp(torch.tensor(-alpha * max(stress, 0.0))).item())
 
-    x: Tensor de forma [batch, cfg.input_dim]
-    y: Tensor de etiquetas enteras para clasificación [batch]
-    """
-    raise NotImplementedError("Implementa aquí tu carga de dataset real.")
+    @staticmethod
+    def _weibull_survival(load: float, scale: float, shape: float) -> float:
+        x = max(load, 0.0) / max(scale, 1e-6)
+        return float(torch.exp(torch.tensor(-(x**shape))).item())
 
+    def _forward_correction(self, drivers: DriverVector) -> float:
+        x = torch.tensor(
+            [
+                drivers.temperature_stress,
+                drivers.humidity_contamination,
+                drivers.operational_load,
+                drivers.maintenance_level,
+            ],
+            dtype=torch.float32,
+        )
+        return float(self.correction_net(x).item())
 
-@torch.no_grad()
-def evaluate(
-    model: nn.Module, loader: DataLoader, criterion: nn.Module, device: torch.device
-) -> Tuple[float, float]:
-    model.eval()
-    total_loss = 0.0
-    total_correct = 0
-    total_samples = 0
+    def physics_health(self, drivers: DriverVector, cross_component_factor: float) -> float:
+        """Override in child classes with component-specific degradation logic."""
+        raise NotImplementedError
 
-    for xb, yb in loader:
-        xb, yb = xb.to(device), yb.to(device)
-        logits = model(xb)
-        loss = criterion(logits, yb)
+    def derive_metrics(self, health: float, drivers: DriverVector) -> dict[str, float]:
+        """Override in child classes with component-specific telemetry metrics."""
+        raise NotImplementedError
 
-        total_loss += loss.item() * xb.size(0)
-        total_correct += (logits.argmax(dim=1) == yb).sum().item()
-        total_samples += xb.size(0)
+    def forward(self, drivers: DriverVector, cross_component_factor: float = 0.0) -> ComponentReport:
+        base = self.physics_health(drivers, cross_component_factor)
 
-    return total_loss / total_samples, total_correct / total_samples
+        # Keep deterministic defaults by not using learned correction in inference.
+        correction = 0.0
+        health = self._clamp01(base + correction)
 
-
-def train(
-    cfg: TrainConfig, train_loader: DataLoader, val_loader: DataLoader
-) -> DenseModel:
-    torch.manual_seed(cfg.seed)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    use_amp = device.type == "cuda"
-
-    model = DenseModel(cfg.input_dim, cfg.hidden_dim, cfg.output_dim, cfg.dropout).to(
-        device
-    )
-
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.epochs)
-    scaler = torch.amp.GradScaler(enabled=use_amp)
-
-    best_val_loss = float("inf")
-    best_state = None
-    no_improve_epochs = 0
-
-    for epoch in range(1, cfg.epochs + 1):
-        model.train()
-        running_loss = 0.0
-
-        for xb, yb in train_loader:
-            xb, yb = xb.to(device), yb.to(device)
-            optimizer.zero_grad(set_to_none=True)
-
-            with torch.amp.autocast(device_type=device.type, enabled=use_amp):
-                logits = model(xb)
-                loss = criterion(logits, yb)
-
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            nn.utils.clip_grad_norm_(model.parameters(), max_norm=cfg.grad_clip)
-            scaler.step(optimizer)
-            scaler.update()
-
-            running_loss += loss.item() * xb.size(0)
-
-        scheduler.step()
-
-        train_loss = running_loss / len(train_loader.dataset)
-        val_loss, val_acc = evaluate(model, val_loader, criterion, device)
-
-        print(
-            f"Epoch {epoch:02d}/{cfg.epochs} | "
-            f"train_loss={train_loss:.4f} | val_loss={val_loss:.4f} | val_acc={val_acc:.4f}"
+        return ComponentReport(
+            component=self.component_name,
+            health_index=health,
+            operational_status=self._status_from_health(health),
+            metrics=self.derive_metrics(health, drivers),
         )
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
-            no_improve_epochs = 0
-        else:
-            no_improve_epochs += 1
 
-        if no_improve_epochs >= cfg.patience:
-            print(f"Early stopping activado en epoch {epoch}.")
-            break
-
-    if best_state is not None:
-        model.load_state_dict(best_state)
-
-    return model
-
-
-def main() -> None:
-    cfg = TrainConfig(
-        input_dim=32,
-        output_dim=5,
-        hidden_dim=128,
-        dropout=0.25,
-    )
-
-    print(
-        "Base creada. Implementa build_dataloaders(cfg) y luego llama a train(cfg, train_loader, val_loader)."
-    )
-    print(DenseModel(cfg.input_dim, cfg.hidden_dim, cfg.output_dim, cfg.dropout))
-
-
-if __name__ == "__main__":
-    main()
+__all__ = [
+    "ComponentReport",
+    "DenseTrainingBase",
+    "DriverVector",
+    "OperationalStatus",
+    "OptimizerConfig",
+]
