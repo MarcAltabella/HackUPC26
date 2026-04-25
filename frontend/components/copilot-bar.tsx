@@ -1,9 +1,5 @@
 "use client";
 
-// Persistent bottom prompt bar — visible on every page.
-// Swap the <textarea> block for prompt-kit's <PromptInput> once installed:
-//   import { PromptInput } from "@/components/ui/prompt-input"
-
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,8 +22,6 @@ export function CopilotBar({ scenarioId = "baseline_nominal" }: CopilotBarProps)
     setReply(null);
 
     try {
-      // Stage 3 M1.3 will wire this to the LLM reasoning layer.
-      // For now, echo a grounded stub so the bar is functional.
       const res = await fetch(
         `http://localhost:8000/api/runs/${scenarioId}/state/latest`
       );

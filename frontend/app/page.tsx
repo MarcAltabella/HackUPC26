@@ -6,8 +6,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
-// ── Types matching FastAPI MachineStateResponse ────────────────────────────
-
 interface SubsystemState {
   subsystem_health: number;
 }
@@ -43,8 +41,6 @@ interface Alert {
 
 const API_BASE = "http://localhost:8000";
 const SCENARIO  = "baseline_nominal";
-
-// ── Helpers ────────────────────────────────────────────────────────────────
 
 function barColor(h: number) {
   if (h > 0.7) return "bg-green-500";
@@ -94,8 +90,6 @@ function deriveAlerts(state: MachineState): Alert[] {
   return alerts;
 }
 
-// ── Page ───────────────────────────────────────────────────────────────────
-
 export default function DashboardPage() {
   const [state, setState]     = useState<MachineState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -110,7 +104,7 @@ export default function DashboardPage() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data: MachineState = await res.json();
         if (alive) { setState(data); setError(null); }
-      } catch (e) {
+      } catch {
         if (alive) setError("Backend unreachable — run: uvicorn api:app --reload --port 8000");
       } finally {
         if (alive) setLoading(false);
@@ -135,7 +129,7 @@ export default function DashboardPage() {
   return (
     <div className="flex h-full">
 
-      {/* ── Center: 3D canvas placeholder (Milestone 6) ──────────── */}
+      {/* Center: 3D canvas placeholder (Milestone 6) */}
       <div className="flex-1 flex flex-col items-center justify-center bg-muted/10 border-r border-border select-none">
         <div className="text-center space-y-3 text-muted-foreground">
           <div className="text-7xl opacity-20">⬡</div>
@@ -151,7 +145,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* ── Right sidebar ─────────────────────────────────────────── */}
+      {/* Right sidebar */}
       <aside className="w-80 flex flex-col gap-3 p-3 bg-background overflow-hidden shrink-0">
 
         {/* Active Alerts */}
