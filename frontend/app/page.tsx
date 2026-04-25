@@ -5,7 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { TimelineControls } from "@/components/timeline-controls";
 import { MachineExperience, type CompStatus, type ComponentStatuses } from "./machine-experience";
+import { LobsterNotifications } from "./lobster-notifications";
 import { getTimeline } from "@/lib/api";
 import type { DiagnosticAlert, MachineState as ApiMachineState } from "@/lib/api-types";
 
@@ -20,6 +22,7 @@ interface AgentStatus {
 
 const TICK_INTERVAL = 333;
 const LOOP_PAUSE    = 1500;
+const BASE_SPEED    = 1;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -326,6 +329,7 @@ export default function MachinePage() {
   const [loading,       setLoading]       = useState(true);
   const [error,         setError]         = useState<string | null>(null);
   const isDemo = false;
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [agentStatus,   setAgentStatus]   = useState<AgentStatus | null>(null);
   const [blueprintView, setBlueprintView] = useState(false);
   const [activeAlertComp, setActiveAlertComp] = useState<string | null>(null);
@@ -362,9 +366,10 @@ export default function MachinePage() {
       }, LOOP_PAUSE);
       return () => clearTimeout(id);
     }
-    const id = setTimeout(() => setAnimTick(t => t + 1), TICK_INTERVAL);
+    const msPerTick = TICK_INTERVAL / (BASE_SPEED * playbackSpeed);
+    const id = setTimeout(() => setAnimTick(t => Math.min(t + 1, maxTick)), msPerTick);
     return () => clearTimeout(id);
-  }, [animTick, timeline.length]);
+  }, [animTick, timeline.length, playbackSpeed]);
 
   // Threshold crossing detection
   useEffect(() => {
@@ -467,6 +472,13 @@ export default function MachinePage() {
     { label: "Thermal",   health: animState.thermal.subsystem_health   },
   ];
 
+  const maxTick = timeline.length - 1;
+
+  function handleScrub(nextTick: number) {
+    const bounded = Math.max(0, Math.min(Math.round(nextTick), maxTick));
+    setAnimTick(bounded);
+  }
+
   return (
     <div className="flex h-full">
 
@@ -477,6 +489,9 @@ export default function MachinePage() {
           blueprintMode={blueprintView}
           onDotClick={handleDotClick}
         />
+
+        {/* Lobster notifications — top-right corner */}
+        <LobsterNotifications />
 
         {/* Blueprint toggle */}
         <button
@@ -493,11 +508,21 @@ export default function MachinePage() {
           Blueprint
         </button>
 
-        {/* Dot-click hint */}
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-xs font-mono text-muted-foreground bg-background/70 rounded px-2 py-1 pointer-events-none">
-          {animState.scenario_id} · t = {animTick}
-          {isDemo && <span className="ml-2 text-yellow-400">· demo</span>}
-          <span className="ml-2 opacity-50">· click dots to inspect</span>
+        {/* Timeline controls at bottom */}
+        <div className="absolute inset-x-3 bottom-3 z-10 rounded border border-border bg-background/75 px-3 py-2 backdrop-blur-sm">
+          <div className="pointer-events-none mb-1 text-center text-xs font-mono text-muted-foreground">
+            {animState.scenario_id} · t = {animTick}
+            {isDemo && <span className="ml-2 text-yellow-400">· demo</span>}
+            <span className="ml-2 opacity-50">· click dots to inspect</span>
+          </div>
+          <TimelineControls
+            totalTicks={timeline.length}
+            animTick={animTick}
+            onScrub={handleScrub}
+            speed={playbackSpeed}
+            onSpeedChange={setPlaybackSpeed}
+            className="pt-1"
+          />
         </div>
       </div>
 

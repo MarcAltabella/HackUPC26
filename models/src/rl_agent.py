@@ -246,8 +246,9 @@ def pick_action_dqn(
     sampler = rng if rng is not None else np.random.default_rng()
     if float(sampler.random()) < epsilon:
         return int(sampler.integers(3))
+    device = next(policy_net.parameters()).device
     with torch.no_grad():
-        return int(policy_net(state.unsqueeze(0).to(DEVICE)).argmax(dim=1).item())
+        return int(policy_net(state.unsqueeze(0).to(device)).argmax(dim=1).item())
 
 
 def save_dqn(model: DQN, path: str | Path) -> None:
@@ -493,6 +494,54 @@ def _run_episode(
     return EpisodeResult(total_reward=total_reward, steps_survived=ticks, failed=failed)
 
 
+_Transition = tuple[list[float], int, float, list[float], bool]
+
+
+def collect_episode(
+    cfg: SimulationConfig,
+    run_id: int,
+    policy_net: DQN,
+    *,
+    epsilon: float = 0.0,
+) -> tuple[EpisodeResult, list[_Transition]]:
+    """Run one episode with no gradient updates. Returns result + serialisable transitions."""
+    seed = _SCENARIO_SEED[cfg.scenario_id] + run_id * 997
+    rng = np.random.default_rng(seed)
+
+    phase1_state = Phase1State()
+    state_report = initial_state_report()
+    steps_since_maint = 0
+    total_reward = 0.0
+    failed = False
+    ticks = 0
+    transitions: list[_Transition] = []
+
+    for t in range(cfg.total_steps):
+        state_vec = continuous_state(state_report, steps_since_maint)
+        action = pick_action_dqn(policy_net, state_vec, epsilon, rng=rng)
+        maintenance_level = action_to_maintenance_level(action)
+        steps_since_maint = 0 if action > 0 else steps_since_maint + 1
+
+        drivers = sample_drivers(t, cfg, rng)
+        drivers = drivers._replace(maintenance_level=maintenance_level)
+
+        phase1_state, new_report = step_phase1(phase1_state, drivers)
+        reward = compute_reward(new_report, action, state_report)
+        done = is_terminal_state(new_report)
+        next_state_vec = continuous_state(new_report, steps_since_maint)
+
+        transitions.append((state_vec.tolist(), action, reward, next_state_vec.tolist(), done))
+
+        total_reward += reward
+        ticks = t + 1
+        state_report = new_report
+        failed = done
+        if done:
+            break
+
+    return EpisodeResult(total_reward=total_reward, steps_survived=ticks, failed=failed), transitions
+
+
 def run_dqn_episode(
     cfg: SimulationConfig,
     run_id: int,
@@ -565,6 +614,7 @@ def run_dqn_episode(
 
 
 __all__ = [
+    "collect_episode",
     "ACTION_TO_MAINTENANCE_LEVEL",
     "DEVICE",
     "DQN",
