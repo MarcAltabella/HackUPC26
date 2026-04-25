@@ -22,9 +22,13 @@ training_.*
 # Frontend/Backend
 node_modules/
 .next/
+/out/
 dist/
 build/
 *.log
+.vercel
+*.tsbuildinfo
+next-env.d.ts
 
 # Generated local artifacts
 /data/

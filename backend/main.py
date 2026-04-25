@@ -28,7 +28,7 @@ logging.basicConfig(
 log = logging.getLogger("copilot.api")
 
 # ── DB path (relative to project root / models/) ─────────────────────────────
-DB_PATH = Path(__file__).parent / "data" / "simulation.db"
+DB_PATH = Path(__file__).parent.parent / "models" / "data" / "simulation.db"
 
 
 # ── DB dependency — read-only connection per request ─────────────────────────
@@ -53,7 +53,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://100.98.98.88", "https://100.98.98.88", "100.98.98.88"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://100.98.98.88:3000",
+        "http://100.98.98.88:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
