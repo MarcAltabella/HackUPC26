@@ -8,8 +8,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 
-from scr.generate_dataset import PROJECT_ROOT, SCENARIOS, SimulationConfig
-from scr.rl_agent import load_q_table, run_rl_episode, run_schedule_episode
+from .generate_dataset import PROJECT_ROOT, SCENARIOS, SimulationConfig
+from .rl_agent import load_q_table, run_rl_episode, run_schedule_episode
 
 
 DEFAULT_Q_TABLE_PATH = PROJECT_ROOT / "data" / "q_table.pkl"

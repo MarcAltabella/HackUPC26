@@ -5,8 +5,8 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
-from scr.generate_dataset import PROJECT_ROOT, SCENARIOS, SimulationConfig
-from scr.rl_agent import (
+from .generate_dataset import PROJECT_ROOT, SCENARIOS, SimulationConfig
+from .rl_agent import (
     RLConfig,
     get_epsilon,
     init_q_table,
