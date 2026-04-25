@@ -40,7 +40,7 @@ SimulationConfig
 ┌─────────────────────────────────────────────────────┐
 │  RL MAINTENANCE AGENT  (bonus)                      │
 │  - observes state vector s from Historian           │
-│  - picks action a ∈ {0, 1, 2}                      │
+│  - picks action a ∈ {0, 1, 2}                       │
 │  - returns maintenance coefficient → back to Clock  │
 │  - computes reward r, updates Q-table (train only)  │
 └─────────────────────────────────────────────────────┘
@@ -156,26 +156,61 @@ action_taken,reward
 
 ### State space
 
-State vector `s = (bin_blade, bin_nozzle, bin_heater, bin_time_since_maint)`.
+State vector `s = (bin_recoating, bin_printhead, bin_thermal, bin_time_since_maint)`.
+
+The RL agent should not observe one health value per individual component. Instead, it observes one health value per subsystem, defined as the minimum health among the components inside that subsystem. This lets you model all three components in each subsystem without exploding the Q-table size.
+
+For example:
+
+- `health_recoating = min(health_blade, health_motor, health_rail)`
+- `health_printhead = min(health_nozzle_plate, health_resistors, health_cleaning_interface)`
+- `health_thermal = min(health_heater, health_temp_sensor, health_insulation)`
+
+This means the agent sees the weakest component inside each subsystem. If the motor or rail degrades faster than the blade, the Recoating subsystem state drops accordingly.
 
 | Dimension | Values | Bins |
 |---|---|---|
-| `health_blade` | 0.0 – 1.0 | 5 |
-| `health_nozzle` | 0.0 – 1.0 | 5 |
-| `health_heater` | 0.0 – 1.0 | 5 |
+| `health_recoating` | `min(blade, motor, rail)` | 5 |
+| `health_printhead` | `min(nozzle_plate, firing_resistors, cleaning_interface)` | 5 |
+| `health_thermal` | `min(heating_elements, temperature_sensors, insulation_panels)` | 5 |
 | `steps_since_maintenance` | 0 – ∞ | 3 (recent/medium/long) |
 
 Total states: 5 × 5 × 5 × 3 = **375**
 
 ```python
-def discretise(health_blade, health_nozzle, health_heater, steps_since_maint):
+def subsystem_healths(state_report):
+    recoating = min(
+        state_report["health_blade"],
+        state_report["health_motor"],
+        state_report["health_rail"],
+    )
+    printhead = min(
+        state_report["health_nozzle_plate"],
+        state_report["health_firing_resistors"],
+        state_report["health_cleaning_interface"],
+    )
+    thermal = min(
+        state_report["health_heating_elements"],
+        state_report["health_temperature_sensors"],
+        state_report["health_insulation_panels"],
+    )
+    return recoating, printhead, thermal
+
+
+def discretise(state_report, steps_since_maint):
     def bin5(v): return min(int(v * 5), 4)
     def bin_time(n):
         if n < 20: return 0
         if n < 60: return 1
         return 2
-    return (bin5(health_blade), bin5(health_nozzle),
-            bin5(health_heater), bin_time(steps_since_maint))
+
+    recoating, printhead, thermal = subsystem_healths(state_report)
+    return (
+        bin5(recoating),
+        bin5(printhead),
+        bin5(thermal),
+        bin_time(steps_since_maint),
+    )
 ```
 
 ### Action space
@@ -189,19 +224,16 @@ def discretise(health_blade, health_nozzle, health_heater, steps_since_maint):
 ### Reward function
 
 ```python
-def compute_reward(state_report, action, prev_min_health):
-    min_health = min(
-        state_report["health_blade"],
-        state_report["health_nozzle"],
-        state_report["health_heater"]
-    )
+def compute_reward(state_report, action, prev_state_report=None):
+    recoating, printhead, thermal = subsystem_healths(state_report)
+    min_health = min(recoating, printhead, thermal)
+
     any_failed = any(
-        s == "FAILED" for s in [
-            state_report["status_blade"],
-            state_report["status_nozzle"],
-            state_report["status_heater"]
-        ]
+        value == "FAILED"
+        for key, value in state_report.items()
+        if key.startswith("status_")
     )
+
     action_cost = {0: 0, 1: -5, 2: -10}[action]
     failure_penalty = -100 if any_failed else 0
     alive_bonus = +1
@@ -266,12 +298,7 @@ for episode in range(N_EPISODES):
     state_report = phase1_engine.reset()
 
     for t in range(MAX_STEPS):
-        s = discretise(
-            state_report["health_blade"],
-            state_report["health_nozzle"],
-            state_report["health_heater"],
-            steps_since_maint
-        )
+        s = discretise(state_report, steps_since_maint)
         a = pick_action(q_table, s, epsilon)
         maintenance_level = {0: 0.0, 1: 0.5, 2: 1.0}[a]
         if a > 0:
@@ -283,18 +310,13 @@ for episode in range(N_EPISODES):
         new_report = phase1_engine.step(*drivers, maintenance_level)
 
         r = compute_reward(new_report, a, state_report)
-        done = any(s == "FAILED" for s in [
-            new_report["status_blade"],
-            new_report["status_nozzle"],
-            new_report["status_heater"]
-        ])
-
-        s_next = discretise(
-            new_report["health_blade"],
-            new_report["health_nozzle"],
-            new_report["health_heater"],
-            steps_since_maint
+        done = any(
+            value == "FAILED"
+            for key, value in new_report.items()
+            if key.startswith("status_")
         )
+
+        s_next = discretise(new_report, steps_since_maint)
         update_q(q_table, s, a, r, s_next, done=done)
         state_report = new_report
 
