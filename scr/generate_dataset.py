@@ -46,9 +46,11 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, TextIO
 
 import numpy as np
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # ══════════════════════════════════════════════════════════════
 # 1.1  SimulationConfig and scenario identifiers
@@ -559,34 +561,55 @@ _CSV_FIELDS = _INSERT_COLS   # same column order for CSV fallback
 
 
 class Historian:
-    """Writes one row per tick to SQLite (primary) and CSV (fallback)."""
+    """Writes one row per tick to SQLite, or CSV if SQLite is unavailable."""
 
     _COMMIT_EVERY = 2_000   # batch commits for SQLite performance
 
     def __init__(self, db_path: Path, csv_path: Path) -> None:
         self._db_path = db_path
+        self._csv_path = csv_path
         self._pending = 0
-        self._conn = sqlite3.connect(db_path)
-        self._conn.executescript(_DDL)
-        self._conn.commit()
+        self._conn: sqlite3.Connection | None = None
+        self._csv_file: TextIO | None = None
+        self._csv_writer: csv.DictWriter | None = None
+        self.backend = "sqlite"
+
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self._conn = sqlite3.connect(db_path)
+            self._conn.executescript(_DDL)
+            self._conn.commit()
+        except sqlite3.Error as exc:
+            self._conn = None
+            self.backend = "csv"
+            print(f"SQLite unavailable ({exc}). Falling back to CSV at {csv_path}.")
+
         csv_path.parent.mkdir(parents=True, exist_ok=True)
-        self._csv_file = open(csv_path, "w", newline="", encoding="utf-8")
-        self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=_CSV_FIELDS)
-        self._csv_writer.writeheader()
+        if self.backend == "csv":
+            self._csv_file = open(csv_path, "w", newline="", encoding="utf-8")
+            self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=_CSV_FIELDS)
+            self._csv_writer.writeheader()
 
     def write(self, row: dict) -> None:
         values = tuple(row[c] for c in _INSERT_COLS)
-        self._conn.execute(_INSERT_SQL, values)
+        if self._conn is not None:
+            self._conn.execute(_INSERT_SQL, values)
+            self._pending += 1
+            if self._pending >= self._COMMIT_EVERY:
+                self._conn.commit()
+                self._pending = 0
+            return
+
+        if self._csv_writer is None:
+            raise RuntimeError("Historian has no writable backend.")
         self._csv_writer.writerow({c: row[c] for c in _CSV_FIELDS})
-        self._pending += 1
-        if self._pending >= self._COMMIT_EVERY:
-            self._conn.commit()
-            self._pending = 0
 
     def close(self) -> None:
-        self._conn.commit()
-        self._conn.close()
-        self._csv_file.close()
+        if self._conn is not None:
+            self._conn.commit()
+            self._conn.close()
+        if self._csv_file is not None:
+            self._csv_file.close()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -650,10 +673,10 @@ def run_simulation(cfg: SimulationConfig, run_id: int, historian: Historian) -> 
 
 
 def main() -> None:
-    out_dir = Path("data")
-    log_dir = Path("logs")
-    out_dir.mkdir(exist_ok=True)
-    log_dir.mkdir(exist_ok=True)
+    out_dir = PROJECT_ROOT / "data"
+    log_dir = PROJECT_ROOT / "logs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     log = ImplementationLog(log_dir / "implementation_log.md")
 
@@ -812,6 +835,12 @@ shock (p=0.05):
     db_path  = out_dir / "simulation.db"
     csv_path = out_dir / "training_dataset.csv"
     historian = Historian(db_path, csv_path)
+    log.section("Milestone 3 â€” Persistence backend", f"""
+- Project-root output directory: `{out_dir}`
+- SQLite remains the primary persistence target: `{db_path}`
+- CSV is used only as a fallback if SQLite is unavailable: `{csv_path}`
+- Runtime backend selected at startup: `{historian.backend}`
+""")
 
     total_rows = 0
     for cfg in SCENARIOS:
@@ -823,6 +852,24 @@ shock (p=0.05):
         print(f"  [{cfg.scenario_id:20s}]  {RUNS_PER_SCENARIO} runs  →  {scenario_rows:,} rows")
 
     historian.close()
+    backend_used = historian.backend
+    if backend_used == "sqlite":
+        print(f"\nSQLite  ->  {db_path}  ({total_rows:,} rows)")
+        print("CSV     ->  not used")
+    else:
+        print("\nSQLite  ->  unavailable")
+        print(f"CSV     ->  {csv_path}  ({total_rows:,} rows)")
+    print(f"Log     ->  {log_dir / 'implementation_log.md'}")
+    log.section("Generation Summary", f"""
+- Total rows: {total_rows:,}
+- Persistence backend used: `{backend_used}`
+- SQLite primary path: `{db_path}`
+- CSV fallback path: `{csv_path}`
+- NN input features: temperature, humidity, load, maintenance, is_shock
+- NN targets (per component): label_* (0=FUNCTIONAL 1=DEGRADED 2=CRITICAL 3=FAILED)
+- Subsystem aggregate columns: health_recoating, health_printhead, health_thermal
+""")
+    return
 
     print(f"\nSQLite  →  {db_path}  ({total_rows:,} rows)")
     print(f"CSV     →  {csv_path}")
