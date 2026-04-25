@@ -8,8 +8,11 @@ __pycache__/
 *.py[cod]
 
 
+# AI files
+.claude
 .codex
+
+
 .python-version
 .env
 .env.*
-.claude
