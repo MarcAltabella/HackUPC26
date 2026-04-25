@@ -40,7 +40,7 @@ interface Alert {
   message: string;
 }
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 const SCENARIO  = "baseline_nominal";
 
 function barColor(h: number) {

@@ -7,6 +7,7 @@ Milestones 1.1 (FastAPI service over SQLite historian) and
 Run with:
     uvicorn api:app --reload --port 8000
 """
+
 import json
 import logging
 import sqlite3
@@ -52,7 +53,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://100.98.98.88", "https://100.98.98.88", "100.98.98.88"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,14 +66,15 @@ app.add_middleware(
 
 
 class EnvironmentalDrivers(BaseModel):
-    temperature: float        # °C
-    humidity: float           # 0–1  (contamination proxy)
-    load: float               # cumulative simulated hours
+    temperature: float  # °C
+    humidity: float  # 0–1  (contamination proxy)
+    load: float  # cumulative simulated hours
     maintenance_level: float  # 0–1
     is_shock: bool
 
 
 # ── Per-component state models ────────────────────────────────────────────────
+
 
 class BladeState(BaseModel):
     health: float
@@ -130,22 +132,23 @@ class InsulationState(BaseModel):
 
 # ── Subsystem aggregates ──────────────────────────────────────────────────────
 
+
 class RecoatingSubsystem(BaseModel):
-    subsystem_health: float   # min(blade, motor, rail)
+    subsystem_health: float  # min(blade, motor, rail)
     blade: BladeState
     motor: MotorState
     rail: RailState
 
 
 class PrintheadSubsystem(BaseModel):
-    subsystem_health: float   # min(nozzle, resistor, cleaning)
+    subsystem_health: float  # min(nozzle, resistor, cleaning)
     nozzle: NozzleState
     resistor: ResistorState
     cleaning: CleaningState
 
 
 class ThermalSubsystem(BaseModel):
-    subsystem_health: float   # min(heater, sensor, insulation)
+    subsystem_health: float  # min(heater, sensor, insulation)
     heater: HeaterState
     sensor: SensorState
     insulation: InsulationState
@@ -153,11 +156,12 @@ class ThermalSubsystem(BaseModel):
 
 # ── Top-level machine state ───────────────────────────────────────────────────
 
+
 class MachineStateResponse(BaseModel):
     # Identifiers / traceability (citation anchors for Stage 3 LLM layer)
     scenario_id: str
-    run_number: int           # integer run_id inside the scenario (0–19)
-    t: int                    # simulation tick (time step)
+    run_number: int  # integer run_id inside the scenario (0–19)
+    t: int  # simulation tick (time step)
     # Environmental context
     drivers: EnvironmentalDrivers
     # Subsystems
@@ -167,6 +171,7 @@ class MachineStateResponse(BaseModel):
 
 
 # ── Compact row for history / comparison endpoints ────────────────────────────
+
 
 class HistoryRow(BaseModel):
     t: int
@@ -293,7 +298,9 @@ def list_scenarios(db: DB):
 def get_latest_state(
     scenario_id: str,
     db: DB,
-    run_number: Optional[int] = Query(default=None, description="Integer run index (0–19). Omit to use run_id=0."),
+    run_number: Optional[int] = Query(
+        default=None, description="Integer run index (0–19). Omit to use run_id=0."
+    ),
 ):
     """
     Return the latest tick state for a given scenario_id (and optionally a specific run_number).
@@ -316,16 +323,22 @@ def get_latest_state(
     ).fetchone()
 
     if row is None:
-        log.warning("  → 404: scenario_id=%s run_number=%d not found", scenario_id, run_number)
+        log.warning(
+            "  → 404: scenario_id=%s run_number=%d not found", scenario_id, run_number
+        )
         raise HTTPException(
             status_code=404,
             detail=f"No data for scenario_id='{scenario_id}' run_number={run_number}",
         )
 
     state = _row_to_state(row)
-    log.info("  → t=%d  recoating=%.3f  printhead=%.3f  thermal=%.3f",
-             state.t, state.recoating.subsystem_health,
-             state.printhead.subsystem_health, state.thermal.subsystem_health)
+    log.info(
+        "  → t=%d  recoating=%.3f  printhead=%.3f  thermal=%.3f",
+        state.t,
+        state.recoating.subsystem_health,
+        state.printhead.subsystem_health,
+        state.thermal.subsystem_health,
+    )
     return state
 
 
@@ -347,7 +360,10 @@ def get_history(
     """
     log.info(
         "GET /api/runs/%s/history  run_number=%d  t=[%d,%d]",
-        scenario_id, run_number, start_t, end_t,
+        scenario_id,
+        run_number,
+        start_t,
+        end_t,
     )
     rows = db.execute(
         """
@@ -415,8 +431,13 @@ def compare_scenarios(
     Return subsystem health time series for multiple scenarios side-by-side.
     Used by the LLM tool `compare_runs` and the dashboard comparison chart.
     """
-    log.info("GET /api/compare  scenarios=%s  run_number=%d  t=[%d,%d]",
-             scenario_ids, run_number, start_t, end_t)
+    log.info(
+        "GET /api/compare  scenarios=%s  run_number=%d  t=[%d,%d]",
+        scenario_ids,
+        run_number,
+        start_t,
+        end_t,
+    )
     result: dict[str, list[HistoryRow]] = {}
     for sid in scenario_ids:
         rows = db.execute(
@@ -440,6 +461,7 @@ def compare_scenarios(
 
 # ── Pydantic schemas for chat ─────────────────────────────────────────────────
 
+
 class Citation(BaseModel):
     run_id: str
     t: int
@@ -454,7 +476,7 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    severity: str        # INFO | WARNING | CRITICAL
+    severity: str  # INFO | WARNING | CRITICAL
     summary: str
     answer: str
     reasoning_summary: list[str]
@@ -470,13 +492,16 @@ _ant_client: ant.Anthropic | None = None
 def _get_ant() -> ant.Anthropic:
     global _ant_client
     if _ant_client is None:
-        _ant_client = ant.Anthropic()   # reads ANTHROPIC_API_KEY from env
+        _ant_client = ant.Anthropic()  # reads ANTHROPIC_API_KEY from env
     return _ant_client
 
 
 # ── Tool implementations (read-only SQLite queries) ───────────────────────────
 
-def _tool_latest_state(conn: sqlite3.Connection, scenario_id: str, run_number: int) -> dict:
+
+def _tool_latest_state(
+    conn: sqlite3.Connection, scenario_id: str, run_number: int
+) -> dict:
     row = conn.execute(
         """
         SELECT t, temperature, humidity, maintenance,
@@ -497,7 +522,9 @@ def _tool_latest_state(conn: sqlite3.Connection, scenario_id: str, run_number: i
         (scenario_id, run_number),
     ).fetchone()
     if row is None:
-        return {"error": f"No data for scenario_id={scenario_id!r} run_number={run_number}"}
+        return {
+            "error": f"No data for scenario_id={scenario_id!r} run_number={run_number}"
+        }
     return dict(row)
 
 
@@ -544,8 +571,17 @@ def _tool_threshold_crossing(
         (scenario_id, run_number, threshold),
     ).fetchone()
     if row is None:
-        return {"crossed": False, "message": f"{component} never dropped below {threshold}"}
-    return {"crossed": True, "component": component, "threshold": threshold, "t": row["t"], "health": row[col]}
+        return {
+            "crossed": False,
+            "message": f"{component} never dropped below {threshold}",
+        }
+    return {
+        "crossed": True,
+        "component": component,
+        "threshold": threshold,
+        "t": row["t"],
+        "health": row[col],
+    }
 
 
 # ── Tool definitions sent to the LLM ─────────────────────────────────────────
@@ -561,8 +597,15 @@ _TOOLS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "scenario_id": {"type": "string", "description": "e.g. 'baseline_nominal'"},
-                "run_number":  {"type": "integer", "description": "Integer replica index (0–19)", "default": 0},
+                "scenario_id": {
+                    "type": "string",
+                    "description": "e.g. 'baseline_nominal'",
+                },
+                "run_number": {
+                    "type": "integer",
+                    "description": "Integer replica index (0–19)",
+                    "default": 0,
+                },
             },
             "required": ["scenario_id"],
         },
@@ -578,9 +621,9 @@ _TOOLS: list[dict] = [
             "type": "object",
             "properties": {
                 "scenario_id": {"type": "string"},
-                "run_number":  {"type": "integer", "default": 0},
-                "start_t":     {"type": "integer", "default": 0},
-                "end_t":       {"type": "integer", "default": 999},
+                "run_number": {"type": "integer", "default": 0},
+                "start_t": {"type": "integer", "default": 0},
+                "end_t": {"type": "integer", "default": 999},
             },
             "required": ["scenario_id"],
         },
@@ -595,13 +638,25 @@ _TOOLS: list[dict] = [
             "type": "object",
             "properties": {
                 "scenario_id": {"type": "string"},
-                "run_number":  {"type": "integer", "default": 0},
+                "run_number": {"type": "integer", "default": 0},
                 "component": {
                     "type": "string",
-                    "enum": ["blade", "motor", "rail", "nozzle", "resistor", "cleaning",
-                             "heater", "sensor", "insulation"],
+                    "enum": [
+                        "blade",
+                        "motor",
+                        "rail",
+                        "nozzle",
+                        "resistor",
+                        "cleaning",
+                        "heater",
+                        "sensor",
+                        "insulation",
+                    ],
                 },
-                "threshold": {"type": "number", "description": "Health threshold 0.0–1.0"},
+                "threshold": {
+                    "type": "number",
+                    "description": "Health threshold 0.0–1.0",
+                },
             },
             "required": ["scenario_id", "component", "threshold"],
         },
@@ -639,9 +694,11 @@ _TOOLS: list[dict] = [
                         "type": "object",
                         "properties": {
                             "run_id": {"type": "string"},
-                            "t":      {"type": "integer"},
-                            "field":  {"type": "string"},
-                            "value":  {"description": "Raw numeric or string value at this tick."},
+                            "t": {"type": "integer"},
+                            "field": {"type": "string"},
+                            "value": {
+                                "description": "Raw numeric or string value at this tick."
+                            },
                         },
                         "required": ["run_id", "t", "field"],
                     },
@@ -652,8 +709,14 @@ _TOOLS: list[dict] = [
                     "description": "Specific, actionable maintenance steps.",
                 },
             },
-            "required": ["severity", "summary", "answer", "reasoning_summary",
-                         "citations", "recommended_actions"],
+            "required": [
+                "severity",
+                "summary",
+                "answer",
+                "reasoning_summary",
+                "citations",
+                "recommended_actions",
+            ],
         },
     },
 ]
@@ -680,11 +743,16 @@ Subsystems and components:
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────
 
+
 @app.post("/api/chat", response_model=ChatResponse, tags=["Milestone 1.3"])
 def chat(req: ChatRequest):
     """Agentic chat: LLM with tool use grounded in the historian DB."""
-    log.info("POST /api/chat  scenario=%s run=%d  q=%r",
-             req.scenario_id, req.run_number, req.message[:80])
+    log.info(
+        "POST /api/chat  scenario=%s run=%d  q=%r",
+        req.scenario_id,
+        req.run_number,
+        req.message[:80],
+    )
 
     client = _get_ant()
     conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
@@ -698,11 +766,13 @@ def chat(req: ChatRequest):
                 model="claude-opus-4-7",
                 max_tokens=4096,
                 thinking={"type": "adaptive"},
-                system=[{
-                    "type": "text",
-                    "text": _SYSTEM_PROMPT,
-                    "cache_control": {"type": "ephemeral"},
-                }],
+                system=[
+                    {
+                        "type": "text",
+                        "text": _SYSTEM_PROMPT,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
                 tools=_TOOLS,
                 messages=messages,
             )
@@ -712,10 +782,14 @@ def chat(req: ChatRequest):
             messages.append({"role": "assistant", "content": resp.content})
 
             if resp.stop_reason == "end_turn":
-                raise HTTPException(500, detail="LLM ended without calling produce_response")
+                raise HTTPException(
+                    500, detail="LLM ended without calling produce_response"
+                )
 
             if resp.stop_reason != "tool_use":
-                raise HTTPException(500, detail=f"Unexpected stop_reason: {resp.stop_reason!r}")
+                raise HTTPException(
+                    500, detail=f"Unexpected stop_reason: {resp.stop_reason!r}"
+                )
 
             tool_results: list[dict] = []
             final_payload: dict | None = None
@@ -724,32 +798,38 @@ def chat(req: ChatRequest):
                 if block.type != "tool_use":
                     continue
 
-                name  = block.name
-                inp   = block.input
-                sc    = inp.get("scenario_id", req.scenario_id)
-                run   = int(inp.get("run_number", req.run_number))
+                name = block.name
+                inp = block.input
+                sc = inp.get("scenario_id", req.scenario_id)
+                run = int(inp.get("run_number", req.run_number))
 
                 if name == "produce_response":
                     final_payload = inp
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": "Response recorded.",
-                    })
-                    break   # done — don't execute further tools this turn
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": "Response recorded.",
+                        }
+                    )
+                    break  # done — don't execute further tools this turn
 
                 try:
                     if name == "get_latest_state":
                         result = _tool_latest_state(conn, sc, run)
                     elif name == "get_component_history":
                         result = _tool_component_history(
-                            conn, sc, run,
+                            conn,
+                            sc,
+                            run,
                             int(inp.get("start_t", 0)),
                             int(inp.get("end_t", 999)),
                         )
                     elif name == "find_threshold_crossing":
                         result = _tool_threshold_crossing(
-                            conn, sc, run,
+                            conn,
+                            sc,
+                            run,
                             inp["component"],
                             float(inp["threshold"]),
                         )
@@ -759,11 +839,13 @@ def chat(req: ChatRequest):
                     result = {"error": str(exc)}
 
                 log.info("    tool=%s → %s", name, str(result)[:120])
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": json.dumps(result, default=str),
-                })
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": json.dumps(result, default=str),
+                    }
+                )
 
             if final_payload is not None:
                 return ChatResponse(
@@ -785,7 +867,9 @@ def chat(req: ChatRequest):
 
             messages.append({"role": "user", "content": tool_results})
 
-        raise HTTPException(500, detail="Agentic loop exhausted without produce_response")
+        raise HTTPException(
+            500, detail="Agentic loop exhausted without produce_response"
+        )
 
     finally:
         conn.close()
