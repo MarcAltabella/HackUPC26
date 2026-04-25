@@ -39,10 +39,10 @@ type DotKey = keyof ComponentStatuses;
 type DotClickHandler = (key: DotKey) => void;
 
 function statusDotColor(s: CompStatus): string {
-  if (s === "FAILED"   || s === "CRITICAL") return "#ef4444";
-  if (s === "DEGRADED")                      return "#f97316";
-  if (s === "WARNING")                       return "#eab308";
-  return "#22c55e";
+  if (s === "FAILED"   || s === "CRITICAL") return "#f87171";
+  if (s === "DEGRADED")                      return "#fb923c";
+  if (s === "WARNING")                       return "#fde047";
+  return "#4ade80";
 }
 
 function statusVisible(s: CompStatus): boolean {
@@ -208,13 +208,13 @@ function Material({
     return (
       <>
         <meshStandardMaterial
-          color="#040c1e"
-          emissive="#1840ff"
-          emissiveIntensity={0.28}
+          color="#2C3E78"
+          emissive="#98AEDD"
+          emissiveIntensity={0.22}
           transparent
           opacity={0.55}
         />
-        <Edges color="#4db8ff" threshold={15} />
+        <Edges color="#E4EAF6" threshold={15} />
       </>
     );
   }
@@ -501,14 +501,14 @@ function ModelScene({
   return (
     <BlueprintCtx.Provider value={bp}>
       <Canvas camera={{ position: [4.4, 2.5, 4.9], fov: 34 }} dpr={[1, 2]} shadows={!bp}>
-        <color attach="background" args={[bp ? "#0048b8" : "#050607"]} />
+        <color attach="background" args={[bp ? "#405CB1" : "#050607"]} />
 
         {bp ? (
           <>
-            <ambientLight intensity={1.4} color="#3a7fff" />
-            <directionalLight position={[4.8, 6.2, 4.2]}  intensity={1.6} color="#60b0ff" />
-            <directionalLight position={[-4.2, 3,  -3.6]} intensity={0.6} color="#2a5aff" />
-            <pointLight       position={[-1.9, 1.4, 1.2]} intensity={1.4} color="#7adcff" />
+            <ambientLight intensity={1.4} color="#98AEDD" />
+            <directionalLight position={[4.8, 6.2, 4.2]}  intensity={1.6} color="#E4EAF6" />
+            <directionalLight position={[-4.2, 3,  -3.6]} intensity={0.6} color="#405CB1" />
+            <pointLight       position={[-1.9, 1.4, 1.2]} intensity={1.4} color="#E4EAF6" />
           </>
         ) : (
           <>
@@ -526,10 +526,10 @@ function ModelScene({
               position={[0, -0.012, 0]}
               cellSize={0.25}
               cellThickness={0.6}
-              cellColor="#ffffff"
+              cellColor="#E4EAF6"
               sectionSize={1}
               sectionThickness={1.6}
-              sectionColor="#ffffff"
+              sectionColor="#E4EAF6"
               fadeDistance={14}
               fadeStrength={2.2}
               infiniteGrid
@@ -572,7 +572,7 @@ export function MachineExperience({
   onDotClick?: DotClickHandler;
 }) {
   return (
-    <div className="h-full w-full overflow-hidden" style={{ background: blueprintMode ? "#0048b8" : "#050607" }}>
+    <div className="h-full w-full overflow-hidden" style={{ background: blueprintMode ? "#405CB1" : "#050607" }}>
       <ModelScene statuses={statuses} blueprintMode={blueprintMode} onDotClick={onDotClick} />
     </div>
   );

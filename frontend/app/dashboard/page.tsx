@@ -22,19 +22,19 @@ function toStatus(h: number): string {
 }
 
 function healthColor(h: number): string {
-  if (h > 0.7)  return "#22c55e";
-  if (h > 0.4)  return "#eab308";
-  if (h > 0.2)  return "#f97316";
-  return "#ef4444";
+  if (h > 0.7)  return "#4ade80";
+  if (h > 0.4)  return "#fde047";
+  if (h > 0.2)  return "#fb923c";
+  return "#f87171";
 }
 
 function segColor(h: number): string {
-  if (h > 0.85) return "#166534";
-  if (h > 0.70) return "#15803d";
-  if (h > 0.50) return "#854d0e";
-  if (h > 0.25) return "#9a3412";
-  if (h > 0.10) return "#991b1b";
-  return "#7f1d1d";
+  if (h > 0.85) return "#4ade80";
+  if (h > 0.70) return "#86efac";
+  if (h > 0.50) return "#fde047";
+  if (h > 0.25) return "#fb923c";
+  if (h > 0.10) return "#f87171";
+  return "#ef4444";
 }
 
 const clamp = (v: number) => Math.max(0, Math.min(1, v));
@@ -133,7 +133,7 @@ function KpiStrip({ animTick, critical, warning, avgHealth, scenarioId, runNumbe
       label: "Simulation",
       value: String(Math.floor(animTick)).padStart(3, "0"),
       sub:   scenarioId,
-      color: "rgba(255,255,255,0.90)",
+      color: "rgba(228,234,246,0.92)",
     },
   ];
 
@@ -205,7 +205,7 @@ function LineChart({ data, animTick, totalTicks, color, label, unit, yMin, yMax 
   return (
     <div className="space-y-1">
       <div className="flex items-baseline gap-2">
-        <span className="text-[9px] font-mono font-bold text-primary tracking-[0.18em] uppercase">{label}</span>
+        <span className="text-[10px] font-mono font-semibold text-foreground/90 tracking-wide">{label}</span>
         <span className="text-[9px] font-mono text-muted-foreground">{unit}</span>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: "80px" }} preserveAspectRatio="none">
@@ -220,11 +220,11 @@ function LineChart({ data, animTick, totalTicks, color, label, unit, yMin, yMax 
           return (
             <g key={i}>
               <line x1={padL} y1={y} x2={W - padR} y2={y}
-                stroke="rgba(255,255,255,0.22)" strokeWidth="0.8"
+                stroke="rgba(228,234,246,0.24)" strokeWidth="0.8"
                 strokeDasharray={i === 1 ? "4 3" : "none"}
               />
               <text x={padL - 4} y={y + 3.5}
-                textAnchor="end" fill="rgba(255,255,255,0.60)" fontSize="8"
+                textAnchor="end" fill="rgba(228,234,246,0.65)" fontSize="8"
                 fontFamily="ui-monospace,monospace">
                 {v.toFixed(0)}
               </text>
@@ -233,7 +233,7 @@ function LineChart({ data, animTick, totalTicks, color, label, unit, yMin, yMax 
         })}
         {xTicks.map(t => (
           <text key={t} x={px(t)} y={H - 2}
-            textAnchor="middle" fill="rgba(255,255,255,0.60)" fontSize="8"
+            textAnchor="middle" fill="rgba(228,234,246,0.65)" fontSize="8"
             fontFamily="ui-monospace,monospace">
             {t}
           </text>
@@ -277,7 +277,7 @@ function DegradationRow({ label, fullData, animTick, currentHealth }: {
             key={i}
             className="flex-1 h-full"
             style={{
-              background: i <= floor ? segColor(h) : "rgba(255,255,255,0.08)",
+              background: i <= floor ? segColor(h) : "rgba(228,234,246,0.08)",
               opacity:    i === floor ? frac : 1,
               minWidth:   0,
             }}
@@ -472,8 +472,8 @@ export default function DashboardPage() {
               data={tempFull}
               animTick={animTick}
               totalTicks={totalTicks}
-              color="#f97316"
-              label="TEMPERATURE"
+              color="#fbbf24"
+              label="Temperature"
               unit="°C"
               yMin={tempMin}
               yMax={tempMax}
@@ -482,8 +482,8 @@ export default function DashboardPage() {
               data={humidFull}
               animTick={animTick}
               totalTicks={totalTicks}
-              color="#38bdf8"
-              label="HUMIDITY"
+              color="#a5f3fc"
+              label="Humidity"
               unit="%"
               yMin={0}
               yMax={100}
@@ -497,10 +497,10 @@ export default function DashboardPage() {
           right={
             <div className="flex items-center gap-3 text-[9px] font-mono text-muted-foreground">
               {[
-                { color: "#166534", label: "NOMINAL" },
-                { color: "#854d0e", label: "WARNING" },
-                { color: "#9a3412", label: "DEGRADED" },
-                { color: "#991b1b", label: "CRITICAL" },
+                { color: "#4ade80", label: "Nominal" },
+                { color: "#fde047", label: "Warning" },
+                { color: "#fb923c", label: "Degraded" },
+                { color: "#f87171", label: "Critical" },
               ].map(({ color, label }) => (
                 <span key={label} className="flex items-center gap-1">
                   <span className="inline-block w-2 h-2" style={{ background: color }} />

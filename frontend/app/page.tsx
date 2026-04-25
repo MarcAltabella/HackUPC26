@@ -41,10 +41,10 @@ type Boosts = { recoating: number; printhead: number; thermal: number };
 function healthPct(h: number) { return (h * 100).toFixed(0); }
 
 function barColor(h: number) {
-  if (h > 0.7) return "bg-green-500";
-  if (h > 0.4) return "bg-yellow-500";
-  if (h > 0.2) return "bg-orange-500";
-  return "bg-red-600";
+  if (h > 0.7) return "bg-green-400";
+  if (h > 0.4) return "bg-yellow-300";
+  if (h > 0.2) return "bg-orange-400";
+  return "bg-red-400";
 }
 
 function severityColor(s: "CRITICAL" | "WARNING") {

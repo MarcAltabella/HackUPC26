@@ -85,58 +85,65 @@
 
 /* ── Blueprint dark theme ──────────────────────────────────────────────────── */
 
-.dark {
-  /* Vivid cobalt-blue background — classic blueprint paper */
-  --background:          oklch(0.44 0.222 264);
-  --foreground:          oklch(0.97 0.006 240);
+/*
+   Palette:
+     DARK   #405CB1  background / paper
+     MEDIUM #98AEDD  accents / muted panels
+     LIGHT  #E4EAF6  text / blueprint lines
+*/
 
-  /* Card: slightly darker blue panel */
-  --card:                oklch(0.37 0.205 264);
-  --card-foreground:     oklch(0.97 0.006 240);
+.dark {
+  /* Background — blueprint paper */
+  --background:          #405CB1;
+  --foreground:          #E4EAF6;
+
+  /* Card: slightly darker panel */
+  --card:                #3A53A0;
+  --card-foreground:     #E4EAF6;
 
   /* Popover */
-  --popover:             oklch(0.34 0.195 264);
-  --popover-foreground:  oklch(0.97 0.006 240);
+  --popover:             #364C92;
+  --popover-foreground:  #E4EAF6;
 
-  /* Primary: white — the blueprint line colour */
-  --primary:             oklch(0.97 0.006 240);
-  --primary-foreground:  oklch(0.44 0.222 264);
+  /* Primary: light — the blueprint line colour */
+  --primary:             #E4EAF6;
+  --primary-foreground:  #405CB1;
 
-  /* Secondary: darker blue panel */
-  --secondary:           oklch(0.35 0.198 264);
-  --secondary-foreground:oklch(0.97 0.006 240);
+  /* Secondary: medium-tone panel */
+  --secondary:           #98AEDD;
+  --secondary-foreground:#1F2A52;
 
   /* Muted */
-  --muted:               oklch(0.36 0.200 264);
-  --muted-foreground:    oklch(0.78 0.030 240);
+  --muted:               #3A53A0;
+  --muted-foreground:    #C8D3EC;
 
   /* Accent */
-  --accent:              oklch(0.34 0.195 264);
-  --accent-foreground:   oklch(0.97 0.006 240);
+  --accent:              #98AEDD;
+  --accent-foreground:   #1F2A52;
 
   /* Destructive stays red for alert visibility */
   --destructive:         oklch(0.65 0.230 25);
 
-  /* Borders: white translucent lines */
-  --border:              oklch(1 0 0 / 0.24);
-  --input:               oklch(1 0 0 / 0.20);
-  --ring:                oklch(0.97 0.006 240);
+  /* Borders: light translucent lines */
+  --border:              rgba(228, 234, 246, 0.28);
+  --input:               rgba(228, 234, 246, 0.22);
+  --ring:                #E4EAF6;
 
   /* Charts: keep accent palette legible on blue */
-  --chart-1:             oklch(0.97 0.006 240);
-  --chart-2:             oklch(0.85 0.08  190);
-  --chart-3:             oklch(0.70 0.14  190);
-  --chart-4:             oklch(0.55 0.18  200);
-  --chart-5:             oklch(0.40 0.20  210);
+  --chart-1:             #E4EAF6;
+  --chart-2:             #98AEDD;
+  --chart-3:             oklch(0.85 0.08  190);
+  --chart-4:             oklch(0.70 0.14  190);
+  --chart-5:             oklch(0.55 0.18  200);
 
-  --sidebar:             oklch(0.36 0.200 264);
-  --sidebar-foreground:  oklch(0.97 0.006 240);
-  --sidebar-primary:     oklch(0.97 0.006 240);
-  --sidebar-primary-foreground: oklch(0.44 0.222 264);
-  --sidebar-accent:      oklch(0.32 0.188 264);
-  --sidebar-accent-foreground: oklch(0.97 0.006 240);
-  --sidebar-border:      oklch(1 0 0 / 0.24);
-  --sidebar-ring:        oklch(0.97 0.006 240);
+  --sidebar:             #3A53A0;
+  --sidebar-foreground:  #E4EAF6;
+  --sidebar-primary:     #E4EAF6;
+  --sidebar-primary-foreground: #405CB1;
+  --sidebar-accent:      #364C92;
+  --sidebar-accent-foreground: #E4EAF6;
+  --sidebar-border:      rgba(228, 234, 246, 0.28);
+  --sidebar-ring:        #E4EAF6;
 }
 
 @layer base {
@@ -155,9 +162,9 @@
 
 .dark body {
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.30) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.30) 1px, transparent 1px),
-    linear-gradient(rgba(255, 255, 255, 0.10) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.10) 1px, transparent 1px);
+    linear-gradient(rgba(228, 234, 246, 0.32) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(228, 234, 246, 0.32) 1px, transparent 1px),
+    linear-gradient(rgba(228, 234, 246, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(228, 234, 246, 0.12) 1px, transparent 1px);
   background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px;
 }

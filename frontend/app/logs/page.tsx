@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import { MOCK_HISTORY } from "@/lib/mock-data";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -241,51 +241,67 @@ export default function LogsPage() {
       )}
 
       {/* ── Table ── */}
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <ScrollArea className="h-full">
-          <table className="w-full text-xs" style={{ minWidth: 1040 }}>
+      <div className="flex-1 min-h-0 overflow-auto">
+          <table className="text-xs border-separate border-spacing-0" style={{ minWidth: 1320, width: "100%" }}>
+            <colgroup>
+              <col style={{ minWidth: 48 }} />
+              <col style={{ minWidth: 76 }} />
+              <col style={{ minWidth: 66 }} />
+              {/* Recoating */}
+              <col style={{ minWidth: 72 }} />
+              <col style={{ minWidth: 72 }} />
+              <col style={{ minWidth: 72 }} />
+              {/* Printhead */}
+              <col style={{ minWidth: 72 }} />
+              <col style={{ minWidth: 72 }} />
+              <col style={{ minWidth: 72 }} />
+              {/* Thermal */}
+              <col style={{ minWidth: 72 }} />
+              <col style={{ minWidth: 72 }} />
+              <col style={{ minWidth: 76 }} />
+            </colgroup>
             <thead className="sticky top-0 z-10 bg-background">
               {/* Row 1 — subsystem group headers */}
               <tr className="border-b border-border/60">
-                <th className="px-3 py-1.5 text-left font-mono text-[10px] text-muted-foreground tracking-[0.22em] uppercase" rowSpan={2}>T</th>
-                <th className="px-3 py-1.5 text-left font-mono text-[10px] text-muted-foreground tracking-[0.22em] uppercase" rowSpan={2}>TEMP °C</th>
-                <th className="px-3 py-1.5 text-left font-mono text-[10px] text-muted-foreground tracking-[0.22em] uppercase" rowSpan={2}>HUMID</th>
+                <th className="px-3 py-1.5 text-left font-mono text-[10px] text-foreground/60 tracking-wide" rowSpan={2}>T</th>
+                <th className="px-3 py-1.5 text-left font-mono text-[10px] text-foreground/60 tracking-wide" rowSpan={2}>Temp °C</th>
+                <th className="px-3 py-1.5 text-left font-mono text-[10px] text-foreground/60 tracking-wide" rowSpan={2}>Humid</th>
                 <th
                   colSpan={3}
-                  className="px-3 py-1 text-center font-mono text-[10px] tracking-[0.22em] uppercase border-l border-border/60"
-                  style={{ color: "oklch(0.72 0.19 210)" }}
+                  className="px-3 py-1 text-center font-mono text-[10px] font-semibold tracking-wide border-l border-border/60"
+                  style={{ color: "rgba(228,234,246,0.92)" }}
                 >
-                  ▸ RECOATING
+                  ▸ Recoating
                 </th>
                 <th
                   colSpan={3}
-                  className="px-3 py-1 text-center font-mono text-[10px] tracking-[0.22em] uppercase border-l border-border/60"
-                  style={{ color: "oklch(0.72 0.19 210)" }}
+                  className="px-3 py-1 text-center font-mono text-[10px] font-semibold tracking-wide border-l border-border/60"
+                  style={{ color: "rgba(228,234,246,0.92)" }}
                 >
-                  ▸ PRINTHEAD
+                  ▸ Printhead
                 </th>
                 <th
                   colSpan={3}
-                  className="px-3 py-1 text-center font-mono text-[10px] tracking-[0.22em] uppercase border-l border-border/60"
-                  style={{ color: "oklch(0.72 0.19 210)" }}
+                  className="px-3 py-1 text-center font-mono text-[10px] font-semibold tracking-wide border-l border-border/60"
+                  style={{ color: "rgba(228,234,246,0.92)" }}
                 >
-                  ▸ THERMAL
+                  ▸ Thermal
                 </th>
               </tr>
               {/* Row 2 — component sub-headers */}
               <tr className="border-b border-border">
                 {/* Recoating */}
-                <th className="px-2 py-1 text-right font-mono text-[9px] text-muted-foreground/70 tracking-wider uppercase border-l border-border/60">BLADE</th>
-                <th className="px-2 py-1 text-right font-mono text-[9px] text-muted-foreground/70 tracking-wider uppercase">MOTOR</th>
-                <th className="px-2 py-1 text-right font-mono text-[9px] text-muted-foreground/70 tracking-wider uppercase">RAIL</th>
+                <th className="px-2 py-1 text-right font-mono text-[9px] text-foreground/50 tracking-wide border-l border-border/60">Blade</th>
+                <th className="px-2 py-1 text-right font-mono text-[9px] text-foreground/50 tracking-wide">Motor</th>
+                <th className="px-2 py-1 text-right font-mono text-[9px] text-foreground/50 tracking-wide">Rail</th>
                 {/* Printhead */}
-                <th className="px-2 py-1 text-right font-mono text-[9px] text-muted-foreground/70 tracking-wider uppercase border-l border-border/60">NOZZLE</th>
-                <th className="px-2 py-1 text-right font-mono text-[9px] text-muted-foreground/70 tracking-wider uppercase">RESIST</th>
-                <th className="px-2 py-1 text-right font-mono text-[9px] text-muted-foreground/70 tracking-wider uppercase">CLEAN</th>
+                <th className="px-2 py-1 text-right font-mono text-[9px] text-foreground/50 tracking-wide border-l border-border/60">Nozzle</th>
+                <th className="px-2 py-1 text-right font-mono text-[9px] text-foreground/50 tracking-wide">Resist</th>
+                <th className="px-2 py-1 text-right font-mono text-[9px] text-foreground/50 tracking-wide">Clean</th>
                 {/* Thermal */}
-                <th className="px-2 py-1 text-right font-mono text-[9px] text-muted-foreground/70 tracking-wider uppercase border-l border-border/60">HEATER</th>
-                <th className="px-2 py-1 text-right font-mono text-[9px] text-muted-foreground/70 tracking-wider uppercase">SENSOR</th>
-                <th className="px-2 py-1 text-right font-mono text-[9px] text-muted-foreground/70 tracking-wider uppercase">INSUL</th>
+                <th className="px-2 py-1 text-right font-mono text-[9px] text-foreground/50 tracking-wide border-l border-border/60">Heater</th>
+                <th className="px-2 py-1 text-right font-mono text-[9px] text-foreground/50 tracking-wide">Sensor</th>
+                <th className="px-2 py-1 text-right font-mono text-[9px] text-foreground/50 tracking-wide">Insul</th>
               </tr>
             </thead>
             <tbody>
@@ -344,7 +360,6 @@ export default function LogsPage() {
               })}
             </tbody>
           </table>
-        </ScrollArea>
       </div>
 
       {/* ── Pagination ── */}
