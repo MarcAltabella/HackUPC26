@@ -12,7 +12,9 @@ __pycache__/
 .claude
 .codex
 
-superpowers-skills.md
 .python-version
 .env
 .env.*
+
+superpowers-skills.md
+training_.*

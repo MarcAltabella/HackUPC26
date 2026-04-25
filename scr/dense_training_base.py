@@ -221,7 +221,7 @@ def train_classifier(
     scaler = torch.amp.GradScaler(enabled=use_amp)
 
     best_val_loss = float("inf")
-    best_val_acc = 0.0
+    best_val_acc = float("-inf")
     best_state: dict[str, Tensor] | None = None
     no_improve_epochs = 0
 
@@ -252,7 +252,7 @@ def train_classifier(
             flush=True,
         )
 
-        if val_loss < best_val_loss:
+        if val_acc > best_val_acc or (val_acc == best_val_acc and val_loss < best_val_loss):
             best_val_loss = val_loss
             best_val_acc = val_acc
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
