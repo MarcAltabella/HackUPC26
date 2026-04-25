@@ -18,3 +18,10 @@ __pycache__/
 
 superpowers-skills.md
 training_.*
+
+# Frontend/Backend
+node_modules/
+.next/
+dist/
+build/
+
