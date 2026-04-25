@@ -472,3 +472,14 @@ shock (p=0.05):
 
 ---
 
+## DQN training run
+
+- Timestamp: 2026-04-25T20:25:23.049173
+- Episodes: 5000
+- Scenarios: baseline_nominal, humid_factory, chaos_run
+- lr=0.001, gamma=0.99, batch=64
+- Mean reward: -595.770
+- Failure rate: 0.000
+
+---
+
