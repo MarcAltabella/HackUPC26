@@ -1,0 +1,14 @@
+# Virtual environments
+env/
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+
+
+.codex
+.python-version
+.env
+.env.*
