@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from pydantic import BaseModel
+from pytoony import json2toon
 
 GEMINI_API_KEY = "AIzaSyCuVb7jbseAlOG9FOKvp8AKAa3sIqDiid0"
 GEMINI_MODEL = "gemini-3-flash-preview"
@@ -223,18 +224,31 @@ def get_history(
 
 class LLMRequest(BaseModel):
     message: str
+    t: int
+    scenario_id: str = "humid_factory"
 
 
 class LLMResponse(BaseModel):
     reply: str
 
 
+def _slice_toon(scenario_id: str, t: int, window: int = 5) -> str:
+    sc = _require_scenario(scenario_id)
+    t_values = sorted(sc.keys())
+    center = min(t_values, key=lambda x: abs(x - t))
+    idx = t_values.index(center)
+    sliced = [sc[t_values[i]] for i in range(max(0, idx - window), min(len(t_values), idx + window + 1))]
+    return json2toon(json.dumps(sliced))
+
+
 @app.post("/api/llm", response_model=LLMResponse)
 def llm_chat(req: LLMRequest) -> LLMResponse:
+    context = _slice_toon(req.scenario_id, req.t)
+    prompt = f"Machine telemetry context (TOON format, 11 ticks around t={req.t}):\n\n{context}\n\nUser question: {req.message}"
     client = genai.Client(api_key=GEMINI_API_KEY)
     response = client.models.generate_content(
         model=GEMINI_MODEL,
-        contents=req.message,
+        contents=prompt,
     )
     return LLMResponse(reply=response.text)
 

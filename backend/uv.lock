@@ -41,6 +41,7 @@ dependencies = [
     { name = "google-genai" },
     { name = "numpy" },
     { name = "pydantic" },
+    { name = "pytoony" },
     { name = "torch" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -51,6 +52,7 @@ requires-dist = [
     { name = "google-genai", specifier = ">=1.73.1" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pydantic", specifier = ">=2.7" },
+    { name = "pytoony", specifier = ">=0.1.2" },
     { name = "torch", specifier = ">=2.3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]
@@ -751,6 +753,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/82/ed/0301aeeac3e5353ef3d94b6ec08bbcabd04a72018415dcb29e588514bba8/python_dotenv-1.2.2.tar.gz", hash = "sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3", size = 50135, upload-time = "2026-03-01T16:00:26.196Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/d7/1959b9648791274998a9c3526f6d0ec8fd2233e4d4acce81bbae76b44b2a/python_dotenv-1.2.2-py3-none-any.whl", hash = "sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a", size = 22101, upload-time = "2026-03-01T16:00:25.09Z" },
+]
+
+[[package]]
+name = "pytoony"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/36/e6d0614cfa9a18f1a00ad305fc710c647c190f9669f76e6148976ffe40cb/pytoony-0.1.2.tar.gz", hash = "sha256:4e949c4027a43fa104134358e7991ed6ba4ccf3aa56b801ed8ea840b14ce12c0", size = 14743, upload-time = "2025-11-14T04:49:58.359Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d3/58/d35736fd3a477a1f719ffd458b654522ada9bf99a9e13cf33d2c27153104/pytoony-0.1.2-py3-none-any.whl", hash = "sha256:f7f95a643e57395b3aa264c4083ff92d0006fe3e7940b605ea063f6119952422", size = 13733, upload-time = "2025-11-14T04:49:57.496Z" },
 ]
 
 [[package]]
