@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
+from google.genai import types
 from pydantic import BaseModel
 from pytoony import json2toon
 
@@ -16,6 +17,7 @@ GEMINI_API_KEY = "AIzaSyCuVb7jbseAlOG9FOKvp8AKAa3sIqDiid0"
 GEMINI_MODEL = "gemini-3-flash-preview"
 
 PRECOMPUTED_PATH = Path(__file__).parent / "precomputed.json"
+INFO_PATH = Path(__file__).parent / "info.md"
 
 
 class Citation(BaseModel):
@@ -344,12 +346,8 @@ def llm_chat(req: LLMRequest) -> ChatResponse:
     row = _nearest_state_at(req.scenario_id, t)
     context_t = row["t"]
     context = _slice_toon(req.scenario_id, context_t)
+    info = INFO_PATH.read_text().strip()
     prompt = (
-        "You are an HP Metal Jet S100 maintenance co-pilot. "
-        "Answer the user's question using only the telemetry context. "
-        "Be concise, operational, and mention relevant tick numbers or metrics when useful. "
-        "Do not invent components, thresholds, or maintenance actions.\n\n"
-        "Use plain text only. Do not use Markdown emphasis, Markdown tables, or LaTeX math delimiters.\n\n"
         f"Machine telemetry context (TOON format, 11 ticks around t={context_t}):\n\n"
         f"{context}\n\n"
         f"User question: {req.message}"
@@ -358,6 +356,9 @@ def llm_chat(req: LLMRequest) -> ChatResponse:
     response = client.models.generate_content(
         model=GEMINI_MODEL,
         contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=info,
+        ),
     )
     answer = _plain_text_answer(response.text or "No LLM response was returned.")
     return ChatResponse(
