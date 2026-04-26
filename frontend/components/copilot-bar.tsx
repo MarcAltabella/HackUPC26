@@ -1,173 +1,27 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { Button } from "@/components/ui/button";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { askCopilot } from "@/lib/api";
-import type { ChatResponse } from "@/lib/api-types";
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface Message {
-  question: string;
-  response: ChatResponse;
-}
 
 interface CopilotBarProps {
   scenarioId?: string;
   runNumber?: number;
 }
 
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function severityVariant(s: "INFO" | "WARNING" | "CRITICAL") {
-  if (s === "CRITICAL") return "destructive" as const;
-  if (s === "WARNING")  return "outline" as const;
-  return "secondary" as const;
-}
-
-function severityBorder(s: "INFO" | "WARNING" | "CRITICAL") {
-  if (s === "CRITICAL") return "border-l-red-500";
-  if (s === "WARNING")  return "border-l-yellow-500";
-  return "border-l-blue-400";
-}
-
-// ── Message card ──────────────────────────────────────────────────────────────
-
-function MessageCard({ msg }: { msg: Message }) {
-  const r = msg.response;
-  return (
-    <div className="space-y-2">
-      {/* User question */}
-      <div className="flex justify-end">
-        <span className="bg-muted/60 text-xs px-2.5 py-1 rounded-md text-muted-foreground max-w-[80%] text-right">
-          {msg.question}
-        </span>
-      </div>
-
-      {/* AI response */}
-      <div className={`rounded-md border border-border border-l-2 ${severityBorder(r.severity)} bg-muted/10 px-3 py-2.5 space-y-2`}>
-        {/* Severity + summary */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant={severityVariant(r.severity)} className="text-[10px] h-4 px-1.5 shrink-0">
-            {r.severity}
-          </Badge>
-          <p className="text-xs font-medium">{r.summary}</p>
-        </div>
-
-        {/* Answer */}
-        <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">
-          {r.answer}
-        </p>
-
-        {/* Reasoning */}
-        {r.reasoning_summary.length > 0 && (
-          <div>
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Reasoning</p>
-            <ul className="space-y-0.5">
-              {r.reasoning_summary.map((step, i) => (
-                <li key={i} className="text-xs text-muted-foreground flex gap-1.5">
-                  <span className="shrink-0 opacity-40">•</span>
-                  <span>{step}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {/* Citations */}
-        {r.citations.length > 0 && (
-          <div>
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Evidence</p>
-            <div className="flex flex-wrap gap-1.5">
-              {r.citations.map((c, i) => (
-                <div
-                  key={i}
-                  className="rounded border border-border px-2 py-0.5 text-[10px] font-mono bg-muted/50 flex items-center gap-0.5"
-                >
-                  <span className="text-muted-foreground">{c.run_id}</span>
-                  <span className="opacity-30 mx-0.5">·</span>
-                  <span>t={c.t}</span>
-                  <span className="opacity-30 mx-0.5">·</span>
-                  <span className="text-blue-400">{c.field}</span>
-                  {c.value !== null && c.value !== undefined && (
-                    <>
-                      <span className="opacity-30 mx-0.5">=</span>
-                      <span>{typeof c.value === "number" ? c.value.toFixed(3) : c.value}</span>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Recommended actions */}
-        {r.recommended_actions.length > 0 && (
-          <div>
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Actions</p>
-            <div className="flex flex-wrap gap-1.5">
-              {r.recommended_actions.map((a, i) => (
-                <span
-                  key={i}
-                  className="rounded-full border border-border px-2.5 py-0.5 text-[10px] text-muted-foreground bg-muted/30"
-                >
-                  {a}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ── CopilotBar ────────────────────────────────────────────────────────────────
 
 export function CopilotBar({ scenarioId = "humid_factory", runNumber = 0 }: CopilotBarProps) {
-  const [value,    setValue]    = useState("");
-  const [loading,  setLoading]  = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [error,    setError]    = useState<string | null>(null);
+  const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const bottomRef   = useRef<HTMLDivElement>(null);
 
-  // Pre-fill textarea when an alert card fires a manual query
-  useEffect(() => {
-    function handleQuery(e: Event) {
-      const query = (e as CustomEvent<string>).detail;
-      setValue(query);
-      textareaRef.current?.focus();
-    }
-    window.addEventListener("copilot-query", handleQuery);
-    return () => window.removeEventListener("copilot-query", handleQuery);
-  }, []);
-
-  // Scroll to bottom on new messages
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  async function handleSubmit() {
+  function handleSubmit() {
     const q = value.trim();
-    if (!q || loading) return;
+    if (!q) return;
 
-    setLoading(true);
-    setError(null);
     setValue("");
 
-    try {
-      const data = await askCopilot({ message: q, scenarioId, runNumber });
-      setMessages(prev => [...prev, { question: q, response: data }]);
-    } catch {
-      setError("Could not reach the backend — start the FastAPI server on :8000.");
-    } finally {
-      setLoading(false);
-    }
+    // Fire event to trigger chat in the main page
+    window.dispatchEvent(new CustomEvent("copilot-query", { detail: q }));
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -177,63 +31,40 @@ export function CopilotBar({ scenarioId = "humid_factory", runNumber = 0 }: Copi
     }
   }
 
-  const hasContent = messages.length > 0 || !!error;
-
   return (
-    <div className="border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-
-      {/* Conversation history */}
-      {hasContent && (
-        <ScrollArea className="max-h-80 border-b border-border">
-          <div className="px-4 py-3 space-y-4">
-
-            {error && (
-              <p className="text-xs text-destructive font-mono">{error}</p>
-            )}
-
-            {messages.map((msg, i) => (
-              <MessageCard key={i} msg={msg} />
-            ))}
-
-            {/* Loading indicator */}
-            {loading && (
-              <div className="flex justify-end">
-                <span className="bg-muted/60 text-xs px-2.5 py-1 rounded-md text-muted-foreground animate-pulse">
-                  Co-pilot is thinking…
-                </span>
-              </div>
-            )}
-
-            <div ref={bottomRef} />
-          </div>
-        </ScrollArea>
-      )}
-
-      {/* Input row */}
-      <div className="flex items-end gap-2 px-4 py-3 max-w-5xl mx-auto">
-        <Textarea
-          ref={textareaRef}
-          value={value}
-          onChange={e => setValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={loading ? "Co-pilot is thinking…" : "Ask the co-pilot about the machine… (Enter to send)"}
-          className="min-h-[40px] max-h-[120px] resize-none text-sm"
-          rows={1}
-          disabled={loading}
-        />
-        <Button onClick={handleSubmit} disabled={!value.trim() || loading} size="sm" className="shrink-0">
-          {loading ? "…" : "Send"}
-        </Button>
-        {messages.length > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="shrink-0 text-muted-foreground text-xs"
-            onClick={() => { setMessages([]); setError(null); }}
+    <div className="border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 shadow-[0_-1px_8px_rgba(0,0,0,0.15)]">
+      <div className="px-4 py-2.5 max-w-5xl mx-auto">
+        <div className="relative flex items-center">
+          <Textarea
+            ref={textareaRef}
+            value={value}
+            onChange={e => setValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask the co-pilot about the machine… (Enter to send, Shift+Enter for new line)"
+            className="min-h-[44px] max-h-[120px] resize-none text-sm pr-14 py-3 rounded-xl border-border/60 bg-muted/20 focus:bg-background/80 transition-colors"
+            rows={1}
+          />
+          <button
+            onClick={handleSubmit}
+            disabled={!value.trim()}
+            className="absolute right-2 top-1/2 -translate-y-1/2 h-9 w-9 rounded-lg bg-blue-600 hover:bg-blue-500 active:scale-95 disabled:bg-muted/50 disabled:cursor-not-allowed transition-all duration-150 flex items-center justify-center shadow-sm"
+            aria-label="Send message"
           >
-            Clear
-          </Button>
-        )}
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="w-4 h-4 text-white disabled:text-muted-foreground"
+            >
+              <path d="M5 12h14" />
+              <path d="m12 5 7 7-7 7" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -8,8 +8,8 @@ import { Separator } from "@/components/ui/separator";
 import { TimelineControls } from "@/components/timeline-controls";
 import { MachineExperience, type CompStatus, type ComponentStatuses } from "./machine-experience";
 import { LobsterNotifications } from "./lobster-notifications";
-import { getTimeline } from "@/lib/api";
-import type { DiagnosticAlert, MachineState as ApiMachineState } from "@/lib/api-types";
+import { getTimeline, askCopilot } from "@/lib/api";
+import type { DiagnosticAlert, MachineState as ApiMachineState, ChatResponse } from "@/lib/api-types";
 
 // ── Agent activity state ───────────────────────────────────────────────────────
 
@@ -38,6 +38,11 @@ interface RichAlert {
   query: string;
 }
 
+interface ChatMessage {
+  question: string;
+  response: ChatResponse;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function healthPct(h: number) { return (h * 100).toFixed(0); }
@@ -55,6 +60,18 @@ function severityColor(s: "CRITICAL" | "WARNING") {
 
 function badgeVariant(s: "CRITICAL" | "WARNING") {
   return s === "CRITICAL" ? "destructive" as const : "outline" as const;
+}
+
+function chatSeverityVariant(s: "INFO" | "WARNING" | "CRITICAL") {
+  if (s === "CRITICAL") return "destructive" as const;
+  if (s === "WARNING")  return "outline" as const;
+  return "secondary" as const;
+}
+
+function chatSeverityBorder(s: "INFO" | "WARNING" | "CRITICAL") {
+  if (s === "CRITICAL") return "border-l-red-500";
+  if (s === "WARNING")  return "border-l-yellow-500";
+  return "border-l-blue-400";
 }
 
 function toCompStatuses(s: ApiMachineState): ComponentStatuses {
@@ -228,6 +245,93 @@ function fromBackendAlert(alert: DiagnosticAlert): RichAlert {
   };
 }
 
+// ── Chat Message Card ─────────────────────────────────────────────────────────
+
+function MessageCard({ msg }: { msg: ChatMessage }) {
+  const r = msg.response;
+  const borderColor = r.severity === "CRITICAL" ? "border-red-500/30" : r.severity === "WARNING" ? "border-yellow-500/25" : "border-blue-500/25";
+  const bgColor = r.severity === "CRITICAL" ? "bg-red-950/10" : r.severity === "WARNING" ? "bg-yellow-950/5" : "bg-blue-950/5";
+
+  return (
+    <div className="space-y-2.5">
+      {/* User bubble */}
+      <div className="flex justify-end">
+        <div className="bg-blue-600/20 border border-blue-500/30 text-[12px] px-4 py-2.5 rounded-2xl rounded-br-md text-foreground max-w-[88%] leading-relaxed">
+          {msg.question}
+        </div>
+      </div>
+
+      {/* Co-pilot label */}
+      <div className="flex items-center gap-2">
+        <div className="h-5 w-5 rounded-full bg-blue-600/25 border border-blue-500/40 flex items-center justify-center shrink-0">
+          <span className="text-[8px] text-blue-300 font-bold leading-none">AI</span>
+        </div>
+        <span className="text-[10px] text-muted-foreground font-semibold tracking-wide uppercase">Co-Pilot</span>
+        <Badge variant={chatSeverityVariant(r.severity)} className="text-[9px] h-4 px-1.5">
+          {r.severity}
+        </Badge>
+      </div>
+
+      {/* AI response card */}
+      <div className={`rounded-xl border ${borderColor} ${bgColor} overflow-hidden`}>
+        {/* Summary */}
+        <div className="px-4 pt-3.5 pb-3">
+          <p className="text-[12.5px] font-semibold text-foreground leading-snug">{r.summary}</p>
+          <p className="text-[12px] text-foreground/80 mt-2 leading-relaxed whitespace-pre-wrap">{r.answer}</p>
+        </div>
+
+        {/* Reasoning */}
+        {r.reasoning_summary.length > 0 && (
+          <div className="border-t border-border/30 px-4 py-3">
+            <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest mb-2.5">Reasoning</p>
+            <ol className="space-y-2">
+              {r.reasoning_summary.map((step, i) => (
+                <li key={i} className="flex gap-2.5 text-[11.5px] text-muted-foreground leading-relaxed">
+                  <span className="shrink-0 text-muted-foreground/40 font-mono text-[10px] mt-px">{i + 1}.</span>
+                  <span>{step}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+
+        {/* Recommended actions */}
+        {r.recommended_actions.length > 0 && (
+          <div className="border-t border-border/30 px-4 py-3">
+            <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest mb-2.5">Recommended Actions</p>
+            <div className="flex flex-col gap-1.5">
+              {r.recommended_actions.map((a, i) => (
+                <div key={i} className="flex items-start gap-2 text-[11.5px] text-foreground/80 leading-relaxed">
+                  <span className="h-1.5 w-1.5 rounded-full bg-blue-400/60 shrink-0 mt-1.5" />
+                  <span>{a}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Citations */}
+        {r.citations.length > 0 && (
+          <div className="border-t border-border/30 px-4 py-3">
+            <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest mb-2">Evidence</p>
+            <div className="flex flex-wrap gap-1.5">
+              {r.citations.map((c, i) => (
+                <div key={i} className="rounded-md border border-border/50 px-2 py-0.5 text-[10px] font-mono bg-muted/40 flex items-center gap-1 text-muted-foreground">
+                  <span className="text-blue-400">{c.field}</span>
+                  {c.value !== null && c.value !== undefined && (
+                    <span>= {typeof c.value === "number" ? c.value.toFixed(3) : c.value}</span>
+                  )}
+                  <span className="opacity-40">@t={c.t}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Alert Card ────────────────────────────────────────────────────────────────
 
 function AlertCard({
@@ -242,7 +346,6 @@ function AlertCard({
   const [open, setOpen] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
-  // Auto-expand and scroll into view when this alert is activated by a dot click
   useEffect(() => {
     if (!isActive) return;
     requestAnimationFrame(() => {
@@ -255,66 +358,100 @@ function AlertCard({
     window.dispatchEvent(new CustomEvent("copilot-query", { detail: alert.query }));
   }
 
-  const activeBorder = isActive
-    ? alert.severity === "CRITICAL"
-      ? "ring-1 ring-red-500/60 shadow-[0_0_12px_rgba(239,68,68,0.25)]"
-      : "ring-1 ring-yellow-500/60 shadow-[0_0_12px_rgba(234,179,8,0.25)]"
+  const isCritical = alert.severity === "CRITICAL";
+  const borderColor = isCritical ? "border-red-500/40" : "border-yellow-500/30";
+  const glowClass = isActive
+    ? isCritical
+      ? "ring-1 ring-red-500/50 shadow-[0_0_14px_rgba(239,68,68,0.2)]"
+      : "ring-1 ring-yellow-500/50 shadow-[0_0_14px_rgba(234,179,8,0.2)]"
     : "";
+  const dotColor = isCritical ? "bg-red-500 shadow-[0_0_5px_rgba(239,68,68,0.7)]" : "bg-yellow-400 shadow-[0_0_5px_rgba(234,179,8,0.6)]";
+  const severityText = isCritical ? "text-red-400" : "text-yellow-400";
 
   return (
     <div
       ref={cardRef}
-      className={`rounded-md border border-border border-l-2 text-xs overflow-hidden transition-shadow duration-300 ${severityColor(alert.severity)} ${activeBorder}`}
+      className={`rounded-xl border text-xs overflow-hidden ${borderColor} ${glowClass}`}
     >
-      <button
-        className="w-full text-left px-2.5 pt-2.5 pb-2 flex items-start gap-2 hover:bg-muted/20 transition-colors"
-        onClick={() => { setOpen(o => !o); if (isActive) onDismiss(); }}
-      >
-        <div className="flex-1 min-w-0 space-y-0.5">
-          <div className="flex items-center gap-1.5">
-            <Badge variant={badgeVariant(alert.severity)} className="text-[9px] h-3.5 px-1 shrink-0">
+      {/* Header */}
+      <div className="px-4 pt-3 pb-2.5">
+        {/* Top row: severity indicator + chevron toggle */}
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <span className={`h-2 w-2 rounded-full shrink-0 ${dotColor}`} />
+            <span className={`text-[10px] font-bold uppercase tracking-widest ${severityText}`}>
               {alert.severity}
-            </Badge>
-            <span className="font-medium truncate">{alert.component}</span>
+            </span>
             {isActive && (
-              <span className="ml-auto shrink-0 h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
+              <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse ml-0.5" />
             )}
           </div>
-          <p className="text-[11px] text-muted-foreground">{alert.subsystem} · {alert.metric}</p>
-          <p className="text-[11px] leading-snug">{alert.summary}</p>
+          <button
+            className="p-1 rounded hover:bg-muted/30 transition-colors"
+            onClick={() => { setOpen(o => !o); if (isActive) onDismiss(); }}
+            aria-label={open ? "Collapse" : "Expand"}
+          >
+            <svg
+              className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+              xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
         </div>
-        <span className="text-muted-foreground shrink-0 mt-0.5 text-[10px]">{open ? "▲" : "▼"}</span>
-      </button>
+        {/* Component name + subsystem */}
+        <div className="flex items-baseline gap-2 mb-1.5">
+          <span className="text-[13px] font-bold text-foreground">{alert.component}</span>
+          <span className="text-[10px] text-muted-foreground">{alert.subsystem}</span>
+          <span className="ml-auto font-mono text-[10px] text-muted-foreground">{alert.metric}</span>
+        </div>
+        {/* Summary */}
+        <p className="text-[11.5px] leading-relaxed text-foreground/80">{alert.summary}</p>
+      </div>
 
+      {/* Expanded content */}
       {open && (
-        <div className="border-t border-border/50 px-2.5 py-2 space-y-2.5 bg-muted/10">
-          <div>
-            <p className="text-[9px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Reasoning</p>
-            <ul className="space-y-0.5">
+        <div className="border-t border-border/40 bg-muted/5">
+          {/* Diagnosis */}
+          <div className="px-4 py-3">
+            <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest mb-2.5">Diagnosis</p>
+            <ol className="space-y-2">
               {alert.reasoning.map((r, i) => (
-                <li key={i} className="flex gap-1 text-[11px] text-muted-foreground leading-snug">
-                  <span className="shrink-0 opacity-40">•</span>
+                <li key={i} className="flex gap-2.5 text-[11.5px] text-muted-foreground leading-relaxed">
+                  <span className="shrink-0 text-muted-foreground/40 font-mono text-[10px] mt-px">{i + 1}.</span>
                   <span>{r}</span>
                 </li>
               ))}
-            </ul>
+            </ol>
           </div>
-          <div>
-            <p className="text-[9px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Actions</p>
-            <div className="flex flex-wrap gap-1">
+
+          {/* Actions */}
+          <div className="border-t border-border/30 px-4 py-3">
+            <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest mb-2.5">Recommended Actions</p>
+            <div className="flex flex-col gap-1.5">
               {alert.actions.map((a, i) => (
-                <span key={i} className="rounded-full border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground bg-muted/20">
-                  {a}
-                </span>
+                <div key={i} className="flex items-start gap-2 text-[11.5px] text-foreground/80 leading-relaxed">
+                  <span className={`h-1.5 w-1.5 rounded-full shrink-0 mt-1.5 ${isCritical ? "bg-red-400/60" : "bg-yellow-400/60"}`} />
+                  <span>{a}</span>
+                </div>
               ))}
             </div>
           </div>
-          <button
-            onClick={askCopilot}
-            className="text-[10px] text-blue-400 hover:text-blue-300 underline underline-offset-2 transition-colors"
-          >
-            Ask co-pilot ↗
-          </button>
+
+          {/* Ask Co-Pilot CTA */}
+          <div className="border-t border-border/30 px-4 py-3">
+            <button
+              onClick={askCopilot}
+              className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 hover:border-blue-500/50 text-[11.5px] font-semibold text-blue-300 hover:text-blue-200 transition-all duration-150 active:scale-[0.99]"
+            >
+              <svg className="w-3.5 h-3.5 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+              Ask Co-Pilot about this alert
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -333,8 +470,13 @@ export default function MachinePage() {
   const [agentStatus,   setAgentStatus]   = useState<AgentStatus | null>(null);
   const [blueprintView, setBlueprintView] = useState(false);
   const [activeAlertComp, setActiveAlertComp] = useState<string | null>(null);
+  const [activeView,    setActiveView]    = useState<"alerts" | "chat">("alerts");
+  const [chatMessages,  setChatMessages]  = useState<ChatMessage[]>([]);
+  const [chatLoading,   setChatLoading]   = useState(false);
+  const [chatError,     setChatError]     = useState<string | null>(null);
   const triggeredRef  = useRef<Set<string>>(new Set());
   const agentTimers   = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -436,6 +578,38 @@ export default function MachinePage() {
     setActiveAlertComp(prev => prev === compName ? null : compName); // toggle
   }
 
+  // Listen for copilot-query events and switch to chat view
+  useEffect(() => {
+    async function handleCopilotQuery(e: Event) {
+      const query = (e as CustomEvent<string>).detail;
+
+      // Switch to chat view
+      setActiveView("chat");
+
+      // Submit the query
+      setChatLoading(true);
+      setChatError(null);
+
+      try {
+        const data = await askCopilot({ message: query, scenarioId: "humid_factory", runNumber: 0 });
+        setChatMessages(prev => [...prev, { question: query, response: data }]);
+      } catch {
+        setChatError("Could not reach the backend — start the FastAPI server on :8000.");
+      } finally {
+        setChatLoading(false);
+      }
+    }
+    window.addEventListener("copilot-query", handleCopilotQuery);
+    return () => window.removeEventListener("copilot-query", handleCopilotQuery);
+  }, []);
+
+  // Scroll chat to bottom on new messages
+  useEffect(() => {
+    if (activeView === "chat") {
+      chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chatMessages, activeView]);
+
   if (loading || error || timeline.length === 0) {
     return (
       <div className="flex h-full items-center justify-center bg-background p-6">
@@ -510,18 +684,12 @@ export default function MachinePage() {
 
         {/* Timeline controls at bottom */}
         <div className="absolute inset-x-3 bottom-3 z-10 rounded border border-border bg-background/75 px-3 py-2 backdrop-blur-sm">
-          <div className="pointer-events-none mb-1 text-center text-xs font-mono text-muted-foreground">
-            {animState.scenario_id} · t = {animTick}
-            {isDemo && <span className="ml-2 text-yellow-400">· demo</span>}
-            <span className="ml-2 opacity-50">· click dots to inspect</span>
-          </div>
           <TimelineControls
             totalTicks={timeline.length}
             animTick={animTick}
             onScrub={handleScrub}
             speed={playbackSpeed}
             onSpeedChange={setPlaybackSpeed}
-            className="pt-1"
           />
         </div>
       </div>
@@ -529,52 +697,52 @@ export default function MachinePage() {
       {/* Right rail */}
       <aside className="w-[440px] h-full flex flex-col gap-3 p-3 bg-background overflow-hidden shrink-0">
 
-        {/* Active Diagnostics */}
-        <Card className="flex-1 flex flex-col min-h-0">
-          <CardHeader className="py-3 px-4 shrink-0">
-            <CardTitle className="text-xs font-semibold flex items-center justify-between">
-              <span>Active Diagnostics</span>
-              <div className="flex items-center gap-1.5">
-                {alerts.some(a => a.severity === "CRITICAL") && (
-                  <Badge variant="destructive" className="text-[9px] h-4 px-1.5">
-                    {alerts.filter(a => a.severity === "CRITICAL").length} critical
-                  </Badge>
-                )}
-                {alerts.some(a => a.severity === "WARNING") && (
-                  <Badge variant="outline" className="text-[9px] h-4 px-1.5 border-yellow-500 text-yellow-400">
-                    {alerts.filter(a => a.severity === "WARNING").length} warn
-                  </Badge>
-                )}
-                {activeAlertComp && (
-                  <button
-                    onClick={() => setActiveAlertComp(null)}
-                    className="text-[9px] font-mono text-blue-400/70 hover:text-blue-300 transition-colors"
-                  >
-                    ✕ deselect
-                  </button>
-                )}
-              </div>
-            </CardTitle>
-          </CardHeader>
-          <Separator />
-
-          {"maintenance_recommendation" in animState && (
-            <div className="shrink-0 flex items-center gap-2.5 px-4 py-2 border-b bg-blue-950/20 border-blue-500/20">
-              <span className="h-1.5 w-1.5 rounded-full shrink-0 bg-blue-400" />
-              <div className="flex-1 min-w-0">
-                <span className="text-[10px] font-semibold uppercase tracking-widest mr-2 text-muted-foreground">
-                  DQN Policy
+        {/* Active Diagnostics / Chat */}
+        <Card className="flex-1 flex flex-col min-h-0 shadow-lg">
+          <div className="shrink-0 flex border-b border-border">
+            <button
+              onClick={() => setActiveView("alerts")}
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-[11px] font-semibold transition-colors border-b-2 -mb-px ${
+                activeView === "alerts"
+                  ? "border-blue-500 text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Alerts
+              {alerts.some(a => a.severity === "CRITICAL") && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-red-500/20 text-red-400">
+                  {alerts.filter(a => a.severity === "CRITICAL").length}
                 </span>
-                <span className="text-[11px] text-foreground">
-                  {animState.maintenance_recommendation.action_label.replaceAll("_", " ")}
-                  {" "}· reward {animState.maintenance_recommendation.reward.toFixed(2)}
+              )}
+              {alerts.some(a => a.severity === "WARNING") && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-yellow-500/20 text-yellow-400">
+                  {alerts.filter(a => a.severity === "WARNING").length}
                 </span>
-              </div>
-            </div>
-          )}
+              )}
+            </button>
+            <button
+              onClick={() => setActiveView("chat")}
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-[11px] font-semibold transition-colors border-b-2 -mb-px ${
+                activeView === "chat"
+                  ? "border-blue-500 text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Chat
+              {activeView === "chat" && chatMessages.length > 0 && (
+                <span
+                  role="button"
+                  onClick={e => { e.stopPropagation(); setChatMessages([]); setChatError(null); }}
+                  className="text-[9px] text-muted-foreground hover:text-foreground transition-colors ml-0.5"
+                >
+                  ✕
+                </span>
+              )}
+            </button>
+          </div>
 
           {/* Agent activity — inline banner */}
-          {agentStatus && (
+          {agentStatus && activeView === "alerts" && (
             <div className={[
               "shrink-0 flex items-center gap-2.5 px-4 py-2 border-b",
               agentStatus.phase === "fixed"
@@ -599,39 +767,81 @@ export default function MachinePage() {
 
           <CardContent className="flex-1 min-h-0 p-0">
             <ScrollArea className="h-full">
-              <div className="flex flex-col gap-2 p-3">
-                {alerts.length === 0 ? (
-                  <p className="text-xs text-muted-foreground px-1">All components nominal.</p>
-                ) : (
-                  alerts.map(a => (
-                    <AlertCard
-                      key={a.id}
-                      alert={a}
-                      isActive={a.component === activeAlertComp}
-                      onDismiss={() => setActiveAlertComp(null)}
-                    />
-                  ))
-                )}
-              </div>
+              {activeView === "alerts" ? (
+                <div className="flex flex-col gap-2 p-3">
+                  {alerts.length === 0 ? (
+                    <p className="text-xs text-muted-foreground px-1">All components nominal.</p>
+                  ) : (
+                    alerts.map(a => (
+                      <AlertCard
+                        key={a.id}
+                        alert={a}
+                        isActive={a.component === activeAlertComp}
+                        onDismiss={() => setActiveAlertComp(null)}
+                      />
+                    ))
+                  )}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3 p-3">
+                  {chatError && (
+                    <p className="text-xs text-destructive font-mono bg-destructive/10 px-3 py-2 rounded border border-destructive/30">
+                      {chatError}
+                    </p>
+                  )}
+
+                  {chatMessages.length === 0 && !chatLoading && (
+                    <div className="flex flex-col items-center text-center py-10 gap-3 px-2">
+                      <div className="h-10 w-10 rounded-full bg-blue-600/20 border border-blue-500/30 flex items-center justify-center">
+                        <svg className="w-5 h-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-foreground/90">Ask the Co-Pilot</p>
+                        <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
+                          Type a question below, or click<br />&ldquo;Ask Co-Pilot&rdquo; on any alert.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {chatMessages.map((msg, i) => (
+                    <MessageCard key={i} msg={msg} />
+                  ))}
+
+                  {chatLoading && (
+                    <div className="space-y-2.5">
+                      <div className="flex justify-end">
+                        <div className="bg-blue-600/20 border border-blue-500/30 text-[12px] px-4 py-2.5 rounded-2xl rounded-br-md text-foreground/60 animate-pulse">
+                          …
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="h-5 w-5 rounded-full bg-blue-600/25 border border-blue-500/40 flex items-center justify-center shrink-0">
+                          <span className="text-[8px] text-blue-300 font-bold leading-none">AI</span>
+                        </div>
+                        <span className="text-[11px] text-muted-foreground animate-pulse">Co-Pilot is thinking…</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div ref={chatBottomRef} />
+                </div>
+              )}
             </ScrollArea>
           </CardContent>
         </Card>
 
         {/* Subsystem Health */}
         <Card className="shrink-0">
-          <CardHeader className="py-3 px-4">
-            <CardTitle className="text-xs font-semibold flex items-center justify-between">
-              <span>Subsystem Health</span>
-              <span className="text-muted-foreground font-normal text-[10px]">t = {animTick}</span>
-            </CardTitle>
-          </CardHeader>
-          <Separator />
-          <CardContent className="p-3 flex flex-col gap-3">
+          <CardContent className="px-3 py-2 flex items-center gap-4">
+            <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider shrink-0">Health</span>
             {subsystems.map(({ label, health }) => (
-              <div key={label} className="flex flex-col gap-1">
-                <div className="flex justify-between text-xs">
-                  <span className="font-medium">{label}</span>
-                  <span className="font-mono text-muted-foreground">{(health * 100).toFixed(1)}%</span>
+              <div key={label} className="flex-1 flex flex-col gap-1 min-w-0">
+                <div className="flex justify-between text-[9px]">
+                  <span className="font-medium text-foreground/80 truncate">{label}</span>
+                  <span className="font-mono text-muted-foreground ml-1 shrink-0">{(health * 100).toFixed(0)}%</span>
                 </div>
                 <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
                   <div

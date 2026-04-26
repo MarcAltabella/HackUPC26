@@ -118,7 +118,7 @@ function NotificationCard({ n, onDismiss }: { n: Notification; onDismiss: () => 
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       className={[
-        "pointer-events-auto rounded-md border border-border border-l-2 bg-card/95 backdrop-blur-md shadow-2xl overflow-hidden",
+        "pointer-events-auto rounded-md border border-border border-l-2 bg-black/90 backdrop-blur-md shadow-2xl overflow-hidden",
         "transition-all duration-300 ease-out",
         accent,
         mounted ? "opacity-100 translate-x-0" : "opacity-0 translate-x-4",
@@ -138,13 +138,13 @@ function NotificationCard({ n, onDismiss }: { n: Notification; onDismiss: () => 
         className="cursor-pointer select-none hover:bg-muted/15 transition-colors"
       >
         <div className="flex items-center gap-2 px-2.5 pt-2">
-          <span className="relative h-8 w-8 rounded-full bg-[#405CB1] border border-primary/40 overflow-hidden flex items-center justify-center shrink-0">
+          <span className="relative h-8 w-8 flex items-center justify-center shrink-0">
             <img
               src={LOBSTER_SRC}
               alt=""
               width={32}
               height={32}
-              className="relative h-full w-full object-cover"
+              className="relative h-full w-full object-contain"
             />
           </span>
 

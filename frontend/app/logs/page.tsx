@@ -217,8 +217,8 @@ export default function LogsPage() {
 
         <FilterGroup label="Status">
           <select
-            value={draft.statusFilter}
-            onChange={e => setDraft(d => ({ ...d, statusFilter: e.target.value }))}
+            value={filters.statusFilter}
+            onChange={e => setFilters(f => ({ ...f, statusFilter: e.target.value }))}
             className={inputCls}
           >
             <option value="all">All rows</option>
