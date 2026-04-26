@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scr.dense_training_base import DenseTrainingBase, DriverVector
+from models.src.dense_training_base import DenseTrainingBase, DriverVector
 
 
 class CleaningInterfaceModel(DenseTrainingBase):

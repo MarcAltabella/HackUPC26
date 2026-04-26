@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from scr.dense_training_base import ComponentReport, DriverVector
+from models.src.dense_training_base import ComponentReport, DriverVector
 
-from .cleaning_interface import CleaningInterfaceModel
-from .heating_elements import HeatingElementsModel
-from .insulation_panels import InsulationPanelsModel
-from .linear_guide_rail import LinearGuideRailModel
-from .nozzle_plate import NozzlePlateModel
-from .recoater_blade import RecoaterBladeModel
-from .recoater_drive_motor import RecoaterDriveMotorModel
-from .temperature_sensors import TemperatureSensorsModel
-from .thermal_firing_resistors import ThermalFiringResistorsModel
+from models.components.cleaning_interface import CleaningInterfaceModel
+from models.components.heating_elements import HeatingElementsModel
+from models.components.insulation_panels import InsulationPanelsModel
+from models.components.linear_guide_rail import LinearGuideRailModel
+from models.components.nozzle_plate import NozzlePlateModel
+from models.components.recoater_blade import RecoaterBladeModel
+from models.components.recoater_drive_motor import RecoaterDriveMotorModel
+from models.components.temperature_sensors import TemperatureSensorsModel
+from models.components.thermal_firing_resistors import ThermalFiringResistorsModel
 
 
 @dataclass
