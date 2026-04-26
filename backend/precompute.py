@@ -4,8 +4,29 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+import torch
+import torch.nn as nn
+
+class ComponentClassifier(nn.Module):
+    def __init__(self, input_dim=16, output_dim=4, hidden_dim=128, dropout=0.15):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, output_dim)
+        )
+
+    def forward(self, x):
+        return self.net(x)
 
 OUT = Path(__file__).parent / "precomputed.json"
+
+MODELS_DIR = Path(__file__).parent.parent / "models" / "artifacts" / "models"
 
 SCENARIO_ID = "humid_factory"
 RUN_NUMBER = 0
@@ -16,6 +37,31 @@ ACTION_LABELS = {0: "do_nothing", 1: "light_service", 2: "full_maintenance"}
 ACTION_TO_MAINTENANCE = {0: 0.0, 1: 0.5, 2: 1.0}
 
 COMPONENTS = ["blade", "motor", "rail", "nozzle", "resistor", "cleaning", "heater", "sensor", "insulation"]
+
+def load_models():
+    models = {}
+    scalers = {}
+    for comp in COMPONENTS:
+        model_path = MODELS_DIR / f"{comp}_classifier.pt"
+        if not model_path.exists():
+            continue
+        try:
+            import warnings
+            warnings.filterwarnings("ignore")
+            checkpoint = torch.load(model_path, weights_only=False, map_location='cpu')
+            model = ComponentClassifier(**checkpoint['config'])
+            model.load_state_dict(checkpoint['state_dict'])
+            model.eval()
+            models[comp] = model
+            scalers[comp] = {
+                'mean': torch.tensor(checkpoint['mean'], dtype=torch.float32),
+                'std': torch.tensor(checkpoint['std'], dtype=torch.float32)
+            }
+        except Exception as e:
+            print(f"Failed to load {comp}: {e}")
+    return models, scalers
+
+MODELS, SCALERS = load_models()
 
 COMPONENT_META = {
     "blade":      {"display": "Blade",      "subsystem": "Recoating", "metric_field": "thickness_mm",       "metric_label": "thickness",         "unit": "mm"},
@@ -63,15 +109,37 @@ def health_to_label(h: float) -> int:
     return 3
 
 
-def make_prediction(h: float) -> dict:
-    label = health_to_label(h)
-    probs = {LABEL_TO_STATUS[i]: round(0.05 / 3, 6) for i in range(4)}
-    probs[LABEL_TO_STATUS[label]] = 0.85
+def make_prediction(comp: str, features: list[float]) -> dict:
+    if comp not in MODELS:
+        h = features[7 + COMPONENTS.index(comp)]
+        label = health_to_label(h)
+        probs = {LABEL_TO_STATUS[i]: round(0.05 / 3, 6) for i in range(4)}
+        probs[LABEL_TO_STATUS[label]] = 0.85
+        return {
+            "label": label,
+            "status": LABEL_TO_STATUS[label],
+            "confidence": 0.85,
+            "probabilities": probs,
+        }
+    
+    with torch.no_grad():
+        x = torch.tensor([features], dtype=torch.float32)
+        x = (x - SCALERS[comp]['mean']) / SCALERS[comp]['std']
+        logits = MODELS[comp](x)
+        probs = torch.softmax(logits, dim=1).squeeze(0).tolist()
+    
+    num_classes = len(probs)
+    label = max(range(num_classes), key=lambda i: probs[i])
+    status = LABEL_TO_STATUS[label]
+    confidence = probs[label]
+    
+    full_probs = {LABEL_TO_STATUS[i]: round(probs[i] if i < num_classes else 0.0, 6) for i in range(4)}
+    
     return {
         "label": label,
-        "status": LABEL_TO_STATUS[label],
-        "confidence": 0.85,
-        "probabilities": probs,
+        "status": status,
+        "confidence": confidence,
+        "probabilities": full_probs,
     }
 
 
@@ -160,12 +228,12 @@ def build_timeline() -> list[dict]:
     timeline = []
     steps_since_maint = 0
     cumulative_shocks = 0
+    prev_healths = {c: 1.0 for c in COMPONENTS}
 
     for t in range(N):
         p = t / (N - 1) if N > 1 else 0.0
         hr, hp, ht = subsystem_health(t, p)
         healths = component_health(t, p)
-        predictions = {c: make_prediction(healths[c]) for c in COMPONENTS}
 
         temperature = 22.4 + wave(t, 0.15, 2.8)
         humidity = min(1.0, 0.32 + p * 0.41 + wave(t, 0.25, 0.03))
@@ -176,6 +244,20 @@ def build_timeline() -> list[dict]:
 
         action = pick_action(hr, hp, ht, steps_since_maint)
         action_label = ACTION_LABELS[action]
+        maintenance_level = ACTION_TO_MAINTENANCE[action]
+        
+        features = [
+            temperature,
+            humidity,
+            load,
+            maintenance_level,
+            float(is_shock),
+            float(steps_since_maint),
+            float(cumulative_shocks),
+        ] + [prev_healths[c] for c in COMPONENTS]
+
+        predictions = {c: make_prediction(c, features) for c in COMPONENTS}
+
         if action > 0:
             steps_since_maint = 0
         else:
@@ -269,6 +351,7 @@ def build_timeline() -> list[dict]:
             },
         }
         timeline.append(row)
+        prev_healths = healths
 
     return timeline
 

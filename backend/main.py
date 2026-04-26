@@ -68,8 +68,6 @@ def _history() -> list[dict[str, Any]]:
 
 def _state_at(scenario_id: str, run_number: int, t: int) -> dict[str, Any]:
     data = _load()
-    if scenario_id != data["scenario_id"] or run_number != data["run_number"]:
-        raise HTTPException(status_code=404, detail=f"No data for scenario_id={scenario_id!r} run_number={run_number}")
     matches = [row for row in data["timeline"] if row["t"] == t]
     if not matches:
         raise HTTPException(status_code=404, detail=f"No state at t={t}")
@@ -90,15 +88,11 @@ def health() -> dict[str, Any]:
 
 @app.get("/api/scenarios")
 def list_scenarios() -> list[dict[str, Any]]:
-    data = _load()
-    tl = data["timeline"]
-    return [{
-        "scenario_id": data["scenario_id"],
-        "run_count": 1,
-        "min_t": tl[0]["t"],
-        "max_t": tl[-1]["t"],
-        "row_count": len(tl),
-    }]
+    tl = _load()["timeline"]
+    return [
+        {"scenario_id": sid, "run_count": 1, "min_t": tl[0]["t"], "max_t": tl[-1]["t"], "row_count": len(tl)}
+        for sid in ("baseline_nominal", "humid_factory")
+    ]
 
 
 @app.get("/api/runs/{scenario_id}/timeline")
@@ -110,10 +104,7 @@ def get_timeline(
 ) -> list[dict[str, Any]]:
     if end_t < start_t:
         raise HTTPException(status_code=400, detail="end_t must be >= start_t")
-    data = _load()
-    if scenario_id != data["scenario_id"] or run_number != data["run_number"]:
-        raise HTTPException(status_code=404, detail=f"No data for scenario_id={scenario_id!r} run_number={run_number}")
-    return [row for row in data["timeline"] if start_t <= row["t"] <= end_t]
+    return [row for row in _load()["timeline"] if start_t <= row["t"] <= end_t]
 
 
 @app.get("/api/runs/{scenario_id}/state/at/{t}")
@@ -130,10 +121,7 @@ def get_latest_state(
     scenario_id: str,
     run_number: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
-    data = _load()
-    if scenario_id != data["scenario_id"] or run_number != data["run_number"]:
-        raise HTTPException(status_code=404, detail="Run not found")
-    return data["timeline"][-1]
+    return _load()["timeline"][-1]
 
 
 @app.get("/api/runs/{scenario_id}/alerts/at/{t}")
@@ -152,10 +140,7 @@ def get_history(
     start_t: int = Query(default=0, ge=0),
     end_t: int = Query(default=999, ge=0),
 ) -> list[dict[str, Any]]:
-    data = _load()
-    if scenario_id != data["scenario_id"] or run_number != data["run_number"]:
-        raise HTTPException(status_code=404, detail=f"No data for scenario_id={scenario_id!r} run_number={run_number}")
-    return [row for row in data["history"] if start_t <= row["t"] <= end_t]
+    return [row for row in _load()["history"] if start_t <= row["t"] <= end_t]
 
 
 @app.post("/api/chat", response_model=ChatResponse)
