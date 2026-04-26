@@ -7,7 +7,11 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from google import genai
 from pydantic import BaseModel
+
+GEMINI_API_KEY = "AIzaSyCuVb7jbseAlOG9FOKvp8AKAa3sIqDiid0"
+GEMINI_MODEL = "gemini-3-flash-preview"
 
 PRECOMPUTED_PATH = Path(__file__).parent / "precomputed.json"
 
@@ -64,7 +68,7 @@ def _load() -> dict[str, Any]:
 
     # Build index and collect metadata
     index: dict[str, dict[int, dict]] = {}
-    meta:  dict[str, dict] = {}
+    meta: dict[str, dict] = {}
 
     for sid, sdata in scenarios_raw.items():
         tl = sdata["timeline"]
@@ -94,7 +98,9 @@ def _meta() -> dict[str, dict]:
 def _require_scenario(scenario_id: str) -> dict[int, dict]:
     idx = _index()
     if scenario_id not in idx:
-        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_id}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Scenario '{scenario_id}' not found"
+        )
     return idx[scenario_id]
 
 
@@ -111,6 +117,7 @@ def _state_at(scenario_id: str, t: int) -> dict[str, Any]:
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
@@ -190,25 +197,52 @@ def get_history(
         {
             "t": r["t"],
             "temperature": r["drivers"]["temperature"],
-            "humidity":    r["drivers"]["humidity"],
+            "humidity": r["drivers"]["humidity"],
             "health_recoating": r["recoating"]["subsystem_health"],
             "health_printhead": r["printhead"]["subsystem_health"],
-            "health_thermal":   r["thermal"]["subsystem_health"],
-            "status_blade":  r["recoating"]["blade"]["status"],
+            "health_thermal": r["thermal"]["subsystem_health"],
+            "status_blade": r["recoating"]["blade"]["status"],
             "status_nozzle": r["printhead"]["nozzle"]["status"],
             "status_heater": r["thermal"]["heater"]["status"],
-            **{f"health_{c}": r["recoating"][c]["health"]  for c in ["blade", "motor", "rail"]},
-            **{f"health_{c}": r["printhead"][c]["health"]  for c in ["nozzle", "resistor", "cleaning"]},
-            **{f"health_{c}": r["thermal"][c]["health"]    for c in ["heater", "sensor", "insulation"]},
+            **{
+                f"health_{c}": r["recoating"][c]["health"]
+                for c in ["blade", "motor", "rail"]
+            },
+            **{
+                f"health_{c}": r["printhead"][c]["health"]
+                for c in ["nozzle", "resistor", "cleaning"]
+            },
+            **{
+                f"health_{c}": r["thermal"][c]["health"]
+                for c in ["heater", "sensor", "insulation"]
+            },
         }
         for r in rows
     ]
 
 
+class LLMRequest(BaseModel):
+    message: str
+
+
+class LLMResponse(BaseModel):
+    reply: str
+
+
+@app.post("/api/llm", response_model=LLMResponse)
+def llm_chat(req: LLMRequest) -> LLMResponse:
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=req.message,
+    )
+    return LLMResponse(reply=response.text)
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(req: ChatRequest) -> ChatResponse:
     sc = _require_scenario(req.scenario_id)
-    t  = req.t if req.t is not None else max(sc)
+    t = req.t if req.t is not None else max(sc)
     row = _state_at(req.scenario_id, t)
     c = row["_chat"]
     return ChatResponse(
