@@ -117,6 +117,7 @@ export interface MachineState {
 }
 
 export interface HistoryRow {
+  scenario_id?: string;
   t: number;
   temperature: number;
   humidity: number;
@@ -135,6 +136,16 @@ export interface HistoryRow {
   health_heater?: number;
   health_sensor?: number;
   health_insulation?: number;
+}
+
+export interface ScenarioMeta {
+  scenario_id: string;
+  env_profile: string;
+  maintenance_schedule: string;
+  run_number: number;
+  min_t: number;
+  max_t: number;
+  tick_count: number;
 }
 
 export interface ChatResponse {

@@ -21,6 +21,61 @@ interface Notification extends Template {
 }
 
 const TEMPLATES: Record<string, Template> = {
+  "recoating-blade-CRITICAL": {
+    severity: "CRITICAL",
+    subsystem: "Recoating",
+    title: "Queued blade intervention",
+    summary: "Flagged the recoater blade, reduced recoating load, and queued inspection.",
+    reasoning: [
+      "Blade health crossed the demo critical band, so layer uniformity is at risk.",
+      "Reducing recoating load buys time while keeping the machine state visible.",
+      "Inspection is queued before the blade moves into the hard failure zone.",
+    ],
+  },
+  "recoating-rail-WARNING": {
+    severity: "WARNING",
+    subsystem: "Recoating",
+    title: "Rail drift watch",
+    summary: "Raised rail monitoring and prepared recalibration if deviation keeps rising.",
+    reasoning: [
+      "Rail health entered the warning band before the backend hard alert threshold.",
+      "Early rail drift can compound blade wear and recoating inconsistency.",
+      "The agent keeps production running while watching for a steeper trend.",
+    ],
+  },
+  "printhead-resistors-WARNING": {
+    severity: "WARNING",
+    subsystem: "Printhead",
+    title: "Trimmed printhead drive",
+    summary: "Prepared a drive-voltage trim to compensate for resistor drift.",
+    reasoning: [
+      "Resistor health entered the warning band, which can affect drop energy.",
+      "A small drive trim can stabilize output before purge or replacement is needed.",
+      "The agent keeps this as a reversible operational adjustment.",
+    ],
+  },
+  "thermal-sensor-WARNING": {
+    severity: "WARNING",
+    subsystem: "Thermal",
+    title: "Sensor calibration watch",
+    summary: "Marked the thermal sensor for calibration review at the next window.",
+    reasoning: [
+      "Sensor health crossed the warning band, increasing thermal uncertainty.",
+      "Calibration review is low impact and avoids overreacting to slow drift.",
+      "The agent continues monitoring before applying intrusive maintenance.",
+    ],
+  },
+  "thermal-insulation-WARNING": {
+    severity: "WARNING",
+    subsystem: "Thermal",
+    title: "Insulation trend watch",
+    summary: "Flagged insulation drift and scheduled a passive thermal integrity check.",
+    reasoning: [
+      "Insulation health entered the warning band while the machine remains operable.",
+      "A passive check keeps the demo showing action without stopping the run.",
+      "The agent watches for thermal efficiency loss before escalating.",
+    ],
+  },
   "recoating-WARNING": {
     severity: "WARNING",
     subsystem: "Recoating",
@@ -78,7 +133,7 @@ export function LobsterNotifications() {
   }
 
   return (
-    <div className="absolute top-3 right-3 z-20 flex flex-col gap-2 w-[320px] pointer-events-none">
+    <div className="fixed top-[60px] right-[456px] z-50 flex flex-col gap-2 w-[300px] pointer-events-none">
       {items.map(item => (
         <NotificationCard key={item.id} n={item} onDismiss={() => dismiss(item.id)} />
       ))}

@@ -1,13 +1,12 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { CopilotBar } from "@/components/copilot-bar";
 import { NavLinks } from "@/components/nav-links";
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "HP Metal Jet S100 — Digital Co-Pilot",
+  title: "BLUE LOBSTER",
   description: "Industrial Digital Twin Companion — Stage 3",
 };
 
@@ -21,25 +20,23 @@ export default function RootLayout({
       <body className={`${inter.className} bg-background text-foreground antialiased`}>
         <div className="flex flex-col h-screen overflow-hidden">
 
-          <header className="flex items-center justify-between px-4 h-12 border-b border-border bg-background shrink-0">
+          <header className="relative flex items-center justify-between px-4 h-12 border-b border-border bg-background shrink-0">
             <div className="flex items-center gap-3 shrink-0">
               <span className="font-semibold text-sm tracking-tight">
-                HP Metal Jet S100
+                BLUE LOBSTER
               </span>
-              <span className="text-muted-foreground text-xs hidden sm:block">Digital Co-Pilot</span>
             </div>
 
-            <NavLinks />
-
-            <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
+            <div className="absolute left-1/2 -translate-x-1/2">
+              <NavLinks />
             </div>
+
+            <div className="shrink-0 w-[120px]" />
           </header>
 
           <main className="flex-1 overflow-hidden">
             {children}
           </main>
-
-          <CopilotBar />
         </div>
       </body>
     </html>

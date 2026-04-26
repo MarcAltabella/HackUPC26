@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +10,8 @@ import { TimelineControls } from "@/components/timeline-controls";
 import { MachineExperience, type CompStatus, type ComponentStatuses } from "./machine-experience";
 import { LobsterNotifications } from "./lobster-notifications";
 import { getTimeline, askCopilot } from "@/lib/api";
+import { cleanChatText, displayChatAnswer } from "@/lib/chat-format";
+import { logHref } from "@/lib/log-links";
 import type { DiagnosticAlert, MachineState as ApiMachineState, ChatResponse } from "@/lib/api-types";
 
 // ── Agent activity state ───────────────────────────────────────────────────────
@@ -20,9 +23,9 @@ interface AgentStatus {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const TICK_INTERVAL = 333;
+const TICK_INTERVAL = 90;
 const LOOP_PAUSE    = 1500;
-const BASE_SPEED    = 1;
+const BASE_SPEED    = 2;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -74,18 +77,53 @@ function chatSeverityBorder(s: "INFO" | "WARNING" | "CRITICAL") {
   return "border-l-blue-400";
 }
 
+function statusFromHealth(health: number): CompStatus {
+  if (health <= 0.55) return "CRITICAL";
+  if (health <= 0.75) return "DEGRADED";
+  if (health <= 0.92) return "WARNING";
+  return "FUNCTIONAL";
+}
+
+function visualStatus(current: string, health: number): CompStatus {
+  if (current === "FAILED" || current === "CRITICAL") return "CRITICAL";
+  if (current === "DEGRADED") return "DEGRADED";
+  if (current === "WARNING") return "WARNING";
+  return statusFromHealth(health);
+}
+
 function toCompStatuses(s: ApiMachineState): ComponentStatuses {
   return {
-    blade:      s.recoating.blade.status    as CompStatus,
-    motor:      s.recoating.motor.status    as CompStatus,
-    rail:       s.recoating.rail.status     as CompStatus,
-    nozzle:     s.printhead.nozzle.status   as CompStatus,
-    resistors:  s.printhead.resistor.status as CompStatus,
-    cleaning:   s.printhead.cleaning.status as CompStatus,
-    heater:     s.thermal.heater.status     as CompStatus,
-    sensor:     s.thermal.sensor.status     as CompStatus,
-    insulation: s.thermal.insulation.status as CompStatus,
+    blade:      visualStatus(s.recoating.blade.status,    s.recoating.blade.health),
+    motor:      visualStatus(s.recoating.motor.status,    s.recoating.motor.health),
+    rail:       visualStatus(s.recoating.rail.status,     s.recoating.rail.health),
+    nozzle:     visualStatus(s.printhead.nozzle.status,   s.printhead.nozzle.health),
+    resistors:  visualStatus(s.printhead.resistor.status, s.printhead.resistor.health),
+    cleaning:   visualStatus(s.printhead.cleaning.status, s.printhead.cleaning.health),
+    heater:     visualStatus(s.thermal.heater.status,     s.thermal.heater.health),
+    sensor:     visualStatus(s.thermal.sensor.status,     s.thermal.sensor.health),
+    insulation: visualStatus(s.thermal.insulation.status, s.thermal.insulation.health),
   };
+}
+
+function mergeAlerts(primary: RichAlert[], secondary: RichAlert[]) {
+  const byComponent = new Map<string, RichAlert>();
+  for (const alert of [...primary, ...secondary]) {
+    const key = `${alert.subsystem}:${alert.component}`;
+    const existing = byComponent.get(key);
+    if (!existing || (alert.severity === "CRITICAL" && existing.severity !== "CRITICAL")) {
+      byComponent.set(key, alert);
+    }
+  }
+  return [...byComponent.values()].sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "CRITICAL" ? -1 : 1));
+}
+
+function metricNumber(source: object, keys: string[], fallback: number) {
+  const record = source as Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return fallback;
 }
 
 function deriveAlerts(state: ApiMachineState): RichAlert[] {
@@ -110,10 +148,19 @@ function deriveAlerts(state: ApiMachineState): RichAlert[] {
   }
 
   const s = state;
+  const bladeThickness = metricNumber(s.recoating.blade, ["thickness_mm", "metric_blade_mm"], 0);
+  const motorVibration = metricNumber(s.recoating.motor, ["vibration_mm_s", "metric_motor_vib"], 0);
+  const railDeviation = metricNumber(s.recoating.rail, ["deviation_um", "metric_rail_dev"], 0);
+  const nozzleClog = metricNumber(s.printhead.nozzle, ["clog_probability", "metric_nozzle_clog"], 0);
+  const resistorDrift = metricNumber(s.printhead.resistor, ["drift_pct", "metric_resistor_pct"], 0);
+  const cleaningEfficiency = metricNumber(s.printhead.cleaning, ["efficiency", "metric_cleaning_eff"], 1);
+  const heaterResistance = metricNumber(s.thermal.heater, ["resistance_ohm", "metric_heater_ohm"], 0);
+  const sensorError = metricNumber(s.thermal.sensor, ["measurement_error_c", "metric_sensor_err"], 0);
+  const insulationResistance = metricNumber(s.thermal.insulation, ["thermal_resistance", "metric_insulation_r"], 0);
 
   add(
-    s.recoating.blade.status, "Recoating", "Blade",
-    `${s.recoating.blade.thickness_mm.toFixed(2)} mm`,
+    visualStatus(s.recoating.blade.status, s.recoating.blade.health), "Recoating", "Blade",
+    `${bladeThickness.toFixed(2)} mm`,
     `Blade at ${healthPct(s.recoating.blade.health)}% health — wear rate above baseline`,
     [
       `Health ${healthPct(s.recoating.blade.health)}%, degrading ~0.72%/tick`,
@@ -125,24 +172,24 @@ function deriveAlerts(state: ApiMachineState): RichAlert[] {
   );
 
   add(
-    s.recoating.motor.status, "Recoating", "Motor",
-    `${s.recoating.motor.vibration_mm_s.toFixed(1)} mm/s`,
-    `Vibration at ${s.recoating.motor.vibration_mm_s.toFixed(1)} mm/s — bearing fatigue detected`,
+    visualStatus(s.recoating.motor.status, s.recoating.motor.health), "Recoating", "Motor",
+    `${motorVibration.toFixed(1)} mm/s`,
+    `Vibration at ${motorVibration.toFixed(1)} mm/s — bearing fatigue detected`,
     [
-      `Vibration trend: 1.2 → ${s.recoating.motor.vibration_mm_s.toFixed(1)} mm/s over 30 ticks`,
+      `Vibration trend: 1.2 → ${motorVibration.toFixed(1)} mm/s over 30 ticks`,
       `Humidity ingress degrading bearing lubrication film`,
-      `Safety limit 5.0 mm/s — ${((5.0 - s.recoating.motor.vibration_mm_s) / 0.08).toFixed(0)} tick headroom`,
+      `Safety limit 5.0 mm/s — ${((5.0 - motorVibration) / 0.08).toFixed(0)} tick headroom`,
     ],
     ["Inspect motor bearings for moisture", "Lubricate recoating shaft", "Check alignment"],
     `What's causing the recoating motor vibration to increase?`,
   );
 
   add(
-    s.recoating.rail.status, "Recoating", "Rail",
-    `${s.recoating.rail.deviation_um.toFixed(0)} μm`,
-    `Rail deviation ${s.recoating.rail.deviation_um.toFixed(0)} μm — ${(s.recoating.rail.deviation_um / 50).toFixed(1)}× tolerance`,
+    visualStatus(s.recoating.rail.status, s.recoating.rail.health), "Recoating", "Rail",
+    `${railDeviation.toFixed(0)} μm`,
+    `Rail deviation ${railDeviation.toFixed(0)} μm — ${(railDeviation / 50).toFixed(1)}× tolerance`,
     [
-      `Deviation: 12 μm (t=0) → ${s.recoating.rail.deviation_um.toFixed(0)} μm (t=${s.t})`,
+      `Deviation: 12 μm (t=0) → ${railDeviation.toFixed(0)} μm (t=${s.t})`,
       `Root cause: humidity-driven frame thermal expansion`,
       `Layer inconsistency risk HIGH — tolerance limit is 50 μm`,
     ],
@@ -151,11 +198,11 @@ function deriveAlerts(state: ApiMachineState): RichAlert[] {
   );
 
   add(
-    s.printhead.nozzle.status, "Printhead", "Nozzle",
-    `${(s.printhead.nozzle.clog_probability * 100).toFixed(0)}% clog risk`,
+    visualStatus(s.printhead.nozzle.status, s.printhead.nozzle.health), "Printhead", "Nozzle",
+    `${(nozzleClog * 100).toFixed(0)}% clog risk`,
     `Nozzle at ${healthPct(s.printhead.nozzle.health)}% — clog probability critical`,
     [
-      `Clog probability: 0.18 → ${s.printhead.nozzle.clog_probability.toFixed(2)} since humidity spike at t=55`,
+      `Clog probability: 0.18 → ${nozzleClog.toFixed(2)} since humidity spike at t=55`,
       `Contamination cascade: humid air → binder residue → nozzle blockage`,
       `Health threshold CRITICAL at ${healthPct(s.printhead.nozzle.health)}% — intervention required`,
     ],
@@ -164,11 +211,11 @@ function deriveAlerts(state: ApiMachineState): RichAlert[] {
   );
 
   add(
-    s.printhead.resistor.status, "Printhead", "Resistors",
-    `${s.printhead.resistor.drift_pct.toFixed(1)}% drift`,
-    `Resistor drift at ${s.printhead.resistor.drift_pct.toFixed(1)}% — inconsistent drop energy`,
+    visualStatus(s.printhead.resistor.status, s.printhead.resistor.health), "Printhead", "Resistors",
+    `${resistorDrift.toFixed(1)}% drift`,
+    `Resistor drift at ${resistorDrift.toFixed(1)}% — inconsistent drop energy`,
     [
-      `Drift: 0.8% → ${s.printhead.resistor.drift_pct.toFixed(1)}% correlated with humidity >60%`,
+      `Drift: 0.8% → ${resistorDrift.toFixed(1)}% correlated with humidity >60%`,
       `High humidity causing resistive layer oxidation`,
       `Print quality degraded — drop ejection energy inconsistent`,
     ],
@@ -177,12 +224,12 @@ function deriveAlerts(state: ApiMachineState): RichAlert[] {
   );
 
   add(
-    s.printhead.cleaning.status, "Printhead", "Cleaning",
-    `${(s.printhead.cleaning.efficiency * 100).toFixed(0)}% efficiency`,
-    `Cleaning system at ${(s.printhead.cleaning.efficiency * 100).toFixed(0)}% — contamination feedback loop`,
+    visualStatus(s.printhead.cleaning.status, s.printhead.cleaning.health), "Printhead", "Cleaning",
+    `${(cleaningEfficiency * 100).toFixed(0)}% efficiency`,
+    `Cleaning system at ${(cleaningEfficiency * 100).toFixed(0)}% — contamination feedback loop`,
     [
       `Efficiency dropped step-change at t=55 (humidity spike)`,
-      `Wiper condensation reducing effective stroke length by ~${(100 - s.printhead.cleaning.efficiency * 100).toFixed(0)}%`,
+      `Wiper condensation reducing effective stroke length by ~${(100 - cleaningEfficiency * 100).toFixed(0)}%`,
       `Positive feedback: poor cleaning → nozzle clog → more debris → worse cleaning`,
     ],
     ["Clean wiper assembly manually", "Purge with dry air", "Increase cleaning frequency"],
@@ -190,11 +237,11 @@ function deriveAlerts(state: ApiMachineState): RichAlert[] {
   );
 
   add(
-    s.thermal.heater.status, "Thermal", "Heater",
-    `${s.thermal.heater.resistance_ohm.toFixed(1)} Ω`,
-    `Heater resistance drifting to ${s.thermal.heater.resistance_ohm.toFixed(1)} Ω`,
+    visualStatus(s.thermal.heater.status, s.thermal.heater.health), "Thermal", "Heater",
+    `${heaterResistance.toFixed(1)} Ω`,
+    `Heater resistance drifting to ${heaterResistance.toFixed(1)} Ω`,
     [
-      `Resistance: 10.8 → ${s.thermal.heater.resistance_ohm.toFixed(1)} Ω at 0.032 Ω/tick`,
+      `Resistance: 10.8 → ${heaterResistance.toFixed(1)} Ω at 0.032 Ω/tick`,
       `Within 20% tolerance — no immediate risk`,
       `Projected limit crossing at t≈140 if trend continues`,
     ],
@@ -203,24 +250,24 @@ function deriveAlerts(state: ApiMachineState): RichAlert[] {
   );
 
   add(
-    s.thermal.sensor.status, "Thermal", "Sensor",
-    `±${s.thermal.sensor.measurement_error_c.toFixed(1)} °C`,
-    `Sensor error ±${s.thermal.sensor.measurement_error_c.toFixed(1)} °C — within ±1.0 °C spec`,
+    visualStatus(s.thermal.sensor.status, s.thermal.sensor.health), "Thermal", "Sensor",
+    `±${sensorError.toFixed(1)} °C`,
+    `Sensor error ±${sensorError.toFixed(1)} °C — within ±1.0 °C spec`,
     [
-      `Error: 0.2 → ${s.thermal.sensor.measurement_error_c.toFixed(1)} °C, slow linear drift`,
+      `Error: 0.2 → ${sensorError.toFixed(1)} °C, slow linear drift`,
       `Humidity correlation weak (R²=0.31) — likely normal aging`,
-      `${(1.0 - s.thermal.sensor.measurement_error_c).toFixed(1)} °C headroom before spec limit`,
+      `${(1.0 - sensorError).toFixed(1)} °C headroom before spec limit`,
     ],
     ["Log for calibration record", "Schedule calibration at next window"],
     `How serious is the temperature sensor measurement error?`,
   );
 
   add(
-    s.thermal.insulation.status, "Thermal", "Insulation",
-    `R = ${s.thermal.insulation.thermal_resistance.toFixed(2)}`,
-    `Insulation resistance at ${s.thermal.insulation.thermal_resistance.toFixed(2)} — minor degradation`,
+    visualStatus(s.thermal.insulation.status, s.thermal.insulation.health), "Thermal", "Insulation",
+    `R = ${insulationResistance.toFixed(2)}`,
+    `Insulation resistance at ${insulationResistance.toFixed(2)} — minor degradation`,
     [
-      `Thermal R: 2.0 → ${s.thermal.insulation.thermal_resistance.toFixed(2)} over run duration`,
+      `Thermal R: 2.0 → ${insulationResistance.toFixed(2)} over run duration`,
       `Humidity contributing ~5% to degradation rate`,
       `No projected threshold crossings before run end`,
     ],
@@ -249,6 +296,8 @@ function fromBackendAlert(alert: DiagnosticAlert): RichAlert {
 
 function MessageCard({ msg }: { msg: ChatMessage }) {
   const r = msg.response;
+  const summary = cleanChatText(r.summary);
+  const answer = displayChatAnswer(r.answer, summary);
   const borderColor = r.severity === "CRITICAL" ? "border-red-500/30" : r.severity === "WARNING" ? "border-yellow-500/25" : "border-blue-500/25";
   const bgColor = r.severity === "CRITICAL" ? "bg-red-950/10" : r.severity === "WARNING" ? "bg-yellow-950/5" : "bg-blue-950/5";
 
@@ -276,8 +325,10 @@ function MessageCard({ msg }: { msg: ChatMessage }) {
       <div className={`rounded-xl border ${borderColor} ${bgColor} overflow-hidden`}>
         {/* Summary */}
         <div className="px-4 pt-3.5 pb-3">
-          <p className="text-[12.5px] font-semibold text-foreground leading-snug">{r.summary}</p>
-          <p className="text-[12px] text-foreground/80 mt-2 leading-relaxed whitespace-pre-wrap">{r.answer}</p>
+          <p className="text-[12.5px] font-semibold text-foreground leading-snug">{summary}</p>
+          {answer && (
+            <p className="text-[12px] text-foreground/80 mt-2 leading-relaxed whitespace-pre-wrap">{answer}</p>
+          )}
         </div>
 
         {/* Reasoning */}
@@ -316,13 +367,13 @@ function MessageCard({ msg }: { msg: ChatMessage }) {
             <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest mb-2">Evidence</p>
             <div className="flex flex-wrap gap-1.5">
               {r.citations.map((c, i) => (
-                <div key={i} className="rounded-md border border-border/50 px-2 py-0.5 text-[10px] font-mono bg-muted/40 flex items-center gap-1 text-muted-foreground">
+                <Link key={i} href={logHref(c)} className="rounded-md border border-border/50 px-2 py-0.5 text-[10px] font-mono bg-muted/40 flex items-center gap-1 text-muted-foreground hover:border-blue-400/60 hover:text-foreground transition-colors">
                   <span className="text-blue-400">{c.field}</span>
                   {c.value !== null && c.value !== undefined && (
                     <span>= {typeof c.value === "number" ? c.value.toFixed(3) : c.value}</span>
                   )}
                   <span className="opacity-40">@t={c.t}</span>
-                </div>
+                </Link>
               ))}
             </div>
           </div>
@@ -373,9 +424,12 @@ function AlertCard({
       ref={cardRef}
       className={`rounded-xl border text-xs overflow-hidden ${borderColor} ${glowClass}`}
     >
-      {/* Header */}
-      <div className="px-4 pt-3 pb-2.5">
-        {/* Top row: severity indicator + chevron toggle */}
+      {/* Header — full area is clickable to expand/collapse */}
+      <div
+        className="px-4 pt-3 pb-2.5 cursor-pointer select-none"
+        onClick={() => { setOpen(o => !o); if (isActive) onDismiss(); }}
+      >
+        {/* Top row: severity indicator + chevron */}
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <span className={`h-2 w-2 rounded-full shrink-0 ${dotColor}`} />
@@ -386,19 +440,13 @@ function AlertCard({
               <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse ml-0.5" />
             )}
           </div>
-          <button
-            className="p-1 rounded hover:bg-muted/30 transition-colors"
-            onClick={() => { setOpen(o => !o); if (isActive) onDismiss(); }}
-            aria-label={open ? "Collapse" : "Expand"}
+          <svg
+            className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+            xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
           >
-            <svg
-              className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-200 ${open ? "rotate-180" : ""}`}
-              xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-            >
-              <path d="m6 9 6 6 6-6" />
-            </svg>
-          </button>
+            <path d="m6 9 6 6 6-6" />
+          </svg>
         </div>
         {/* Component name + subsystem */}
         <div className="flex items-baseline gap-2 mb-1.5">
@@ -458,25 +506,40 @@ function AlertCard({
   );
 }
 
+// ── Page state cache (survives navigation, resets on hard reload) ─────────────
+
+const _cache = {
+  animTick:      0,
+  chatMessages:  [] as ChatMessage[],
+  activeView:    "alerts" as "alerts" | "chat",
+  paused:        false,
+  playbackSpeed: 2,
+  blueprintView: false,
+  // triggered is intentionally NOT cached — each mount gets a fresh Set
+  // so the lobster fires correctly after navigation
+};
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function MachinePage() {
-  const [animTick,      setAnimTick]      = useState(0);
+  const [animTick,      setAnimTick]      = useState(() => _cache.animTick);
   const [timeline,      setTimeline]      = useState<ApiMachineState[]>([]);
   const [loading,       setLoading]       = useState(true);
   const [error,         setError]         = useState<string | null>(null);
-  const isDemo = false;
-  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [playbackSpeed, setPlaybackSpeed] = useState(() => _cache.playbackSpeed);
+  const [paused,        setPaused]        = useState(() => _cache.paused);
   const [agentStatus,   setAgentStatus]   = useState<AgentStatus | null>(null);
-  const [blueprintView, setBlueprintView] = useState(false);
+  const [blueprintView, setBlueprintView] = useState(() => _cache.blueprintView);
   const [activeAlertComp, setActiveAlertComp] = useState<string | null>(null);
-  const [activeView,    setActiveView]    = useState<"alerts" | "chat">("alerts");
-  const [chatMessages,  setChatMessages]  = useState<ChatMessage[]>([]);
+  const [activeView,    setActiveView]    = useState<"alerts" | "chat">(() => _cache.activeView);
+  const [chatMessages,  setChatMessages]  = useState<ChatMessage[]>(() => _cache.chatMessages);
+  const [chatInput,     setChatInput]     = useState("");
   const [chatLoading,   setChatLoading]   = useState(false);
   const [chatError,     setChatError]     = useState<string | null>(null);
   const triggeredRef  = useRef<Set<string>>(new Set());
   const agentTimers   = useRef<ReturnType<typeof setTimeout>[]>([]);
   const chatBottomRef = useRef<HTMLDivElement>(null);
+  const animTickRef   = useRef(0);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -485,7 +548,7 @@ export default function MachinePage() {
         if (rows.length === 0) throw new Error("API returned no timeline rows");
         setTimeline(rows);
         setError(null);
-        setAnimTick(0);
+        setAnimTick(t => Math.min(t, rows.length - 1));
       })
       .catch((err: Error) => {
         setTimeline([]);
@@ -497,9 +560,32 @@ export default function MachinePage() {
     return () => ctrl.abort();
   }, []);
 
-  // Animation loop
+  // On timeline load, silently mark thresholds already crossed at the current position
+  // so we don't immediately re-fire stale lobster notifications on nav-back
   useEffect(() => {
     if (timeline.length === 0) return;
+    const curr = timeline[Math.min(animTick, timeline.length - 1)];
+    if (!curr) return;
+    if (curr.recoating.subsystem_health <= 0.50) triggeredRef.current.add("recoating-WARNING");
+    if (curr.printhead.subsystem_health  <= 0.50) triggeredRef.current.add("printhead-WARNING");
+    if (curr.recoating.subsystem_health  <= 0.25) triggeredRef.current.add("recoating-CRITICAL");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeline]); // only on timeline load, not on every tick
+
+  // Sync mutable state back to cache so navigation preserves it
+  useEffect(() => {
+    _cache.animTick      = animTick;
+    _cache.chatMessages  = chatMessages;
+    _cache.activeView    = activeView;
+    _cache.paused        = paused;
+    _cache.playbackSpeed = playbackSpeed;
+    _cache.blueprintView = blueprintView;
+    animTickRef.current  = animTick;
+  }, [animTick, chatMessages, activeView, paused, playbackSpeed, blueprintView]);
+
+  // Animation loop
+  useEffect(() => {
+    if (paused || timeline.length === 0) return;
     const maxTick = timeline.length - 1;
     if (animTick >= maxTick) {
       const id = setTimeout(() => {
@@ -509,50 +595,34 @@ export default function MachinePage() {
       return () => clearTimeout(id);
     }
     const msPerTick = TICK_INTERVAL / (BASE_SPEED * playbackSpeed);
-    const id = setTimeout(() => setAnimTick(t => Math.min(t + 10, maxTick)), msPerTick);
+    const id = setTimeout(() => setAnimTick(t => Math.min(t + 1, maxTick)), msPerTick);
     return () => clearTimeout(id);
-  }, [animTick, timeline.length, playbackSpeed]);
+  }, [animTick, timeline.length, playbackSpeed, paused]);
 
-  // Threshold crossing detection
+  // Threshold detection — fires once per loop whenever health is below threshold
   useEffect(() => {
-    if (animTick === 0) return;
-    const prevApi = timeline[animTick - 1];
     const currApi = timeline[animTick];
-    if (!prevApi || !currApi) return;
-    const prev = {
-      health_recoating: prevApi.recoating.subsystem_health,
-      health_printhead: prevApi.printhead.subsystem_health,
-      health_thermal: prevApi.thermal.subsystem_health,
-    };
-    const curr = {
-      health_recoating: currApi.recoating.subsystem_health,
-      health_printhead: currApi.printhead.subsystem_health,
-      health_thermal: currApi.thermal.subsystem_health,
-    };
+    if (!currApi) return;
 
-    function check(
-      key:       string,
-      field:     "health_recoating" | "health_printhead" | "health_thermal",
-      threshold: number,
-    ) {
-      if ((prev[field] as number) > threshold &&
-          (curr[field] as number) <= threshold &&
-          !triggeredRef.current.has(key)) {
+    function check(key: string, value: number, threshold: number) {
+      if (value <= threshold && !triggeredRef.current.has(key)) {
         triggeredRef.current.add(key);
         window.dispatchEvent(new CustomEvent("copilot-proactive", { detail: key }));
       }
     }
 
-    check("recoating-WARNING",  "health_recoating", 0.50);
-    check("printhead-WARNING",  "health_printhead", 0.50);
-    check("recoating-CRITICAL", "health_recoating", 0.25);
+    check("recoating-blade-CRITICAL", currApi.recoating.blade.health, 0.55);
+    check("recoating-rail-WARNING", currApi.recoating.rail.health, 0.86);
+    check("printhead-resistors-WARNING", currApi.printhead.resistor.health, 0.9);
+    check("thermal-sensor-WARNING", currApi.thermal.sensor.health, 0.9);
+    check("thermal-insulation-WARNING", currApi.thermal.insulation.health, 0.9);
   }, [animTick, timeline]);
 
   // Agent activity banner on proactive events
   useEffect(() => {
     function handleProactive(e: Event) {
       const key = (e as CustomEvent<string>).detail;
-      const sub = key.startsWith("printhead") ? "Printhead" : "Recoating";
+      const sub = key.startsWith("printhead") ? "Printhead" : key.startsWith("thermal") ? "Thermal" : "Recoating";
       const sev = key.endsWith("CRITICAL") ? " (CRITICAL)" : "";
 
       agentTimers.current.forEach(clearTimeout);
@@ -591,7 +661,12 @@ export default function MachinePage() {
       setChatError(null);
 
       try {
-        const data = await askCopilot({ message: query, scenarioId: "humid_factory", runNumber: 0 });
+        const data = await askCopilot({
+          message: query,
+          scenarioId: "humid_factory",
+          runNumber: 0,
+          t: animTickRef.current,
+        });
         setChatMessages(prev => [...prev, { question: query, response: data }]);
       } catch {
         setChatError("Could not reach the backend — start the FastAPI server on :8000.");
@@ -637,7 +712,7 @@ export default function MachinePage() {
   }
 
   const animState = timeline[animTick] ?? timeline[timeline.length - 1];
-  const alerts    = animState.alerts.map(fromBackendAlert);
+  const alerts    = mergeAlerts(deriveAlerts(animState), animState.alerts.map(fromBackendAlert));
   const statuses  = toCompStatuses(animState);
 
   const subsystems = [
@@ -690,6 +765,8 @@ export default function MachinePage() {
             onScrub={handleScrub}
             speed={playbackSpeed}
             onSpeedChange={setPlaybackSpeed}
+            paused={paused}
+            onPauseToggle={() => setPaused(p => !p)}
           />
         </div>
       </div>
@@ -765,8 +842,8 @@ export default function MachinePage() {
             </div>
           )}
 
-          <CardContent className="flex-1 min-h-0 p-0">
-            <ScrollArea className="h-full">
+          <CardContent className="flex-1 min-h-0 p-0 flex flex-col">
+            <ScrollArea className="flex-1 min-h-0">
               {activeView === "alerts" ? (
                 <div className="flex flex-col gap-2 p-3">
                   {alerts.length === 0 ? (
@@ -774,7 +851,7 @@ export default function MachinePage() {
                   ) : (
                     alerts.map(a => (
                       <AlertCard
-                        key={a.id}
+                        key={`${a.component}-${a.severity}`}
                         alert={a}
                         isActive={a.component === activeAlertComp}
                         onDismiss={() => setActiveAlertComp(null)}
@@ -830,6 +907,46 @@ export default function MachinePage() {
                 </div>
               )}
             </ScrollArea>
+
+            {/* Inline chat input — only visible in chat view */}
+            {activeView === "chat" && (
+              <div className="shrink-0 border-t border-border p-2">
+                <div className="flex items-center gap-2">
+                  <textarea
+                    value={chatInput}
+                    onChange={e => setChatInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        const q = chatInput.trim();
+                        if (!q || chatLoading) return;
+                        setChatInput("");
+                        window.dispatchEvent(new CustomEvent("copilot-query", { detail: q }));
+                      }
+                    }}
+                    placeholder="Ask the co-pilot… (Enter to send)"
+                    rows={1}
+                    className="min-h-[40px] max-h-[100px] flex-1 resize-none text-[12px] bg-muted/20 border border-border/60 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500/40 placeholder:text-muted-foreground/50 text-foreground"
+                  />
+                  <button
+                    onClick={() => {
+                      const q = chatInput.trim();
+                      if (!q || chatLoading) return;
+                      setChatInput("");
+                      window.dispatchEvent(new CustomEvent("copilot-query", { detail: q }));
+                    }}
+                    disabled={!chatInput.trim() || chatLoading}
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 hover:bg-blue-500 active:scale-95 disabled:bg-muted/50 disabled:cursor-not-allowed transition-all shadow-sm"
+                    aria-label="Send"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                      fill="currentColor" className="block h-3.5 w-3.5 text-white" aria-hidden="true">
+                      <path d="M3.4 20.4l17.45-7.48a1 1 0 0 0 0-1.84L3.4 3.6a1 1 0 0 0-1.36 1.18L4.5 11l8 1-8 1-2.46 6.22a1 1 0 0 0 1.36 1.18z" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 

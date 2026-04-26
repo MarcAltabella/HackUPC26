@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,7 @@ class ChatResponse(BaseModel):
     reasoning_summary: list[str]
     citations: list[Citation]
     recommended_actions: list[str]
+    reply: str | None = None
 
 
 app = FastAPI(title="HP Metal Jet S100 Digital Co-Pilot API", version="1.0.0")
@@ -115,6 +117,14 @@ def _state_at(scenario_id: str, t: int) -> dict[str, Any]:
             detail=f"t={t} not found in '{scenario_id}' (range {m['min_t']}–{m['max_t']})",
         )
     return row
+
+
+def _nearest_state_at(scenario_id: str, t: int) -> dict[str, Any]:
+    sc = _require_scenario(scenario_id)
+    if t in sc:
+        return sc[t]
+    nearest_t = min(sc.keys(), key=lambda existing_t: abs(existing_t - t))
+    return sc[nearest_t]
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -224,12 +234,9 @@ def get_history(
 
 class LLMRequest(BaseModel):
     message: str
-    t: int
     scenario_id: str = "humid_factory"
-
-
-class LLMResponse(BaseModel):
-    reply: str
+    run_number: int = 0
+    t: int | None = None
 
 
 def _slice_toon(scenario_id: str, t: int, window: int = 5) -> str:
@@ -241,16 +248,127 @@ def _slice_toon(scenario_id: str, t: int, window: int = 5) -> str:
     return json2toon(json.dumps(sliced))
 
 
-@app.post("/api/llm", response_model=LLMResponse)
-def llm_chat(req: LLMRequest) -> LLMResponse:
-    context = _slice_toon(req.scenario_id, req.t)
-    prompt = f"Machine telemetry context (TOON format, 11 ticks around t={req.t}):\n\n{context}\n\nUser question: {req.message}"
+def _severity_from_row(row: dict[str, Any]) -> str:
+    severities = [alert.get("severity") for alert in row.get("alerts", [])]
+    if "CRITICAL" in severities:
+        return "CRITICAL"
+    if "WARNING" in severities:
+        return "WARNING"
+    return "INFO"
+
+
+def _summary_from_row(row: dict[str, Any]) -> str:
+    alerts = row.get("alerts", [])
+    if alerts:
+        return alerts[0].get("summary", "Machine telemetry requires attention.")
+    return f"All monitored components are functional at t={row['t']}."
+
+
+def _plain_text_answer(answer: str) -> str:
+    text = answer.strip()
+    text = re.sub(r"\$([^$]+)\$", r"\1", text)
+    text = text.replace("**", "")
+    text = text.replace("__", "")
+    text = re.sub(r"(?m)^\s*\*\s+", "- ", text)
+    return text
+
+
+def _citations_from_row(row: dict[str, Any]) -> list[Citation]:
+    citations: list[Citation] = []
+    for alert in row.get("alerts", [])[:3]:
+        for citation in alert.get("citations", [])[:2]:
+            citations.append(Citation(**citation))
+    if citations:
+        return citations[:4]
+
+    return [
+        Citation(
+            run_id=row["scenario_id"],
+            run_number=row.get("run_number", 0),
+            t=row["t"],
+            field="health_recoating",
+            value=row["recoating"]["subsystem_health"],
+        ),
+        Citation(
+            run_id=row["scenario_id"],
+            run_number=row.get("run_number", 0),
+            t=row["t"],
+            field="health_printhead",
+            value=row["printhead"]["subsystem_health"],
+        ),
+        Citation(
+            run_id=row["scenario_id"],
+            run_number=row.get("run_number", 0),
+            t=row["t"],
+            field="health_thermal",
+            value=row["thermal"]["subsystem_health"],
+        ),
+    ]
+
+
+def _reasoning_from_row(row: dict[str, Any]) -> list[str]:
+    alerts = row.get("alerts", [])
+    if alerts:
+        return [
+            reason
+            for alert in alerts[:2]
+            for reason in alert.get("reasoning", [])[:2]
+        ][:4]
+
+    action = row["maintenance_recommendation"]["action_label"]
+    return [
+        "No diagnostic alerts are active at this tick.",
+        f"Maintenance policy currently recommends {action}.",
+    ]
+
+
+def _actions_from_row(row: dict[str, Any]) -> list[str]:
+    actions = [
+        action
+        for alert in row.get("alerts", [])[:2]
+        for action in alert.get("actions", [])[:2]
+    ]
+    if actions:
+        return actions[:4]
+
+    action = row["maintenance_recommendation"]["action_label"]
+    if action == "do_nothing":
+        return ["Continue monitoring", "Keep current maintenance plan"]
+    return [action.replace("_", " ").capitalize()]
+
+
+@app.post("/api/llm", response_model=ChatResponse)
+def llm_chat(req: LLMRequest) -> ChatResponse:
+    sc = _require_scenario(req.scenario_id)
+    t = req.t if req.t is not None else max(sc)
+    row = _nearest_state_at(req.scenario_id, t)
+    context_t = row["t"]
+    context = _slice_toon(req.scenario_id, context_t)
+    prompt = (
+        "You are an HP Metal Jet S100 maintenance co-pilot. "
+        "Answer the user's question using only the telemetry context. "
+        "Be concise, operational, and mention relevant tick numbers or metrics when useful. "
+        "Do not invent components, thresholds, or maintenance actions.\n\n"
+        "Use plain text only. Do not use Markdown emphasis, Markdown tables, or LaTeX math delimiters.\n\n"
+        f"Machine telemetry context (TOON format, 11 ticks around t={context_t}):\n\n"
+        f"{context}\n\n"
+        f"User question: {req.message}"
+    )
     client = genai.Client(api_key=GEMINI_API_KEY)
     response = client.models.generate_content(
         model=GEMINI_MODEL,
         contents=prompt,
     )
-    return LLMResponse(reply=response.text)
+    answer = _plain_text_answer(response.text or "No LLM response was returned.")
+    return ChatResponse(
+        severity=_severity_from_row(row),
+        summary=_summary_from_row(row),
+        answer=answer,
+        reasoning_summary=_reasoning_from_row(row),
+        citations=_citations_from_row(row),
+        recommended_actions=_actions_from_row(row),
+        reply=answer,
+    )
 
 
 @app.post("/api/chat", response_model=ChatResponse)

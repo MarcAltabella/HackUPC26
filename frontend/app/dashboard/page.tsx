@@ -5,6 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { TimelineControls } from "@/components/timeline-controls";
 import { getHistory, getLatestState } from "@/lib/api";
 import type { HistoryRow, MachineState } from "@/lib/api-types";
+import { FloatingCopilot } from "@/components/floating-copilot";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -321,7 +322,8 @@ export default function DashboardPage() {
   const [error,    setError]    = useState<string | null>(null);
   const isDemo = false;
   const [animTick, setAnimTick] = useState(0);
-  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [playbackSpeed, setPlaybackSpeed] = useState(2.0);
+  const [paused, setPaused] = useState(false);
 
   // Live state polling
   useEffect(() => {
@@ -364,7 +366,7 @@ export default function DashboardPage() {
 
   // Animation loop — t advances by 10 per tick
   useEffect(() => {
-    if (history.length === 0) return;
+    if (paused || history.length === 0) return;
     const maxTick = history.length - 1;
     if (animTick >= maxTick) {
       const id = setTimeout(() => setAnimTick(0), LOOP_PAUSE);
@@ -375,7 +377,7 @@ export default function DashboardPage() {
       TICK_INTERVAL / playbackSpeed,
     );
     return () => clearTimeout(id);
-  }, [animTick, history.length, playbackSpeed]);
+  }, [animTick, history.length, playbackSpeed, paused]);
 
   // ── Derived values ──────────────────────────────────────────────────────────
 
@@ -444,6 +446,7 @@ export default function DashboardPage() {
   }
 
   return (
+    <>
     <ScrollArea className="h-full">
       <div className="p-4 space-y-4 max-w-6xl mx-auto">
 
@@ -483,7 +486,7 @@ export default function DashboardPage() {
               data={tempFull}
               animTick={animTick}
               totalTicks={totalTicks}
-              color="#fbbf24"
+              color="#f8fafc"
               label="Temperature"
               unit="°C"
               yMin={tempMin}
@@ -493,7 +496,7 @@ export default function DashboardPage() {
               data={humidFull}
               animTick={animTick}
               totalTicks={totalTicks}
-              color="#a5f3fc"
+              color="#f8fafc"
               label="Humidity"
               unit="%"
               yMin={0}
@@ -557,11 +560,16 @@ export default function DashboardPage() {
               onScrub={handleScrub}
               speed={playbackSpeed}
               onSpeedChange={setPlaybackSpeed}
+              paused={paused}
+              onPauseToggle={() => setPaused(p => !p)}
             />
           </div>
         </BpPanel>
 
       </div>
     </ScrollArea>
+
+    <FloatingCopilot scenarioId={state.scenario_id} runNumber={state.run_number} t={animTick} />
+    </>
   );
 }

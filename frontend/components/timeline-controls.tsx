@@ -6,6 +6,8 @@ type TimelineControlsProps = {
   onScrub: (nextTick: number) => void;
   speed: number;
   onSpeedChange: (nextSpeed: number) => void;
+  paused?: boolean;
+  onPauseToggle?: () => void;
   className?: string;
 };
 
@@ -15,19 +17,39 @@ export function TimelineControls({
   onScrub,
   speed,
   onSpeedChange,
+  paused = false,
+  onPauseToggle,
   className = "",
 }: TimelineControlsProps) {
   const maxTick = Math.max(totalTicks - 1, 0);
   const boundedTick = Math.max(0, Math.min(animTick, maxTick));
   const tickMarks = [0, 0.2, 0.35, 0.5, 0.65, 0.8, 1];
-  const speedMarks = [0.5, 1, 1.5];
+  const speedMarks = [1.0, 2.0, 4.0];
   const timelinePct = maxTick === 0 ? 0 : (boundedTick / maxTick) * 100;
   const timelineLeft = `calc(${timelinePct}% - 1px)`;
-  const speedPct = ((speed - 0.5) / 1) * 100;
+  const speedPct = ((speed - 1.0) / 3.0) * 100;
 
   return (
     <div className={`pt-2 border-t border-border/40 ${className}`}>
-      <div className="flex items-end gap-5">
+      <div className="flex items-end gap-3">
+        {onPauseToggle && (
+          <button
+            onClick={onPauseToggle}
+            aria-label={paused ? "Resume" : "Pause"}
+            className="shrink-0 h-7 w-7 flex items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors mb-0"
+          >
+            {paused ? (
+              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5,3 19,12 5,21" />
+              </svg>
+            ) : (
+              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="5" y="4" width="4" height="16" rx="1" />
+                <rect x="15" y="4" width="4" height="16" rx="1" />
+              </svg>
+            )}
+          </button>
+        )}
         <div className="flex-1 min-w-0">
           <div className="mb-1.5 flex items-center justify-between text-[9px] font-mono text-muted-foreground">
             <span>t=0</span>
@@ -78,15 +100,15 @@ export function TimelineControls({
               <div
                 key={mark}
                 className="absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/70 bg-card"
-                style={{ left: `${((mark - 0.5) / 1) * 100}%` }}
+                style={{ left: `${((mark - 1.0) / 3.0) * 100}%` }}
               />
             ))}
             <input
               aria-label="Playback speed"
               type="range"
-              min={0.5}
-              max={1.5}
-              step={0.1}
+              min={1.0}
+              max={4.0}
+              step={0.25}
               value={speed}
               onChange={(e) => onSpeedChange(Number(e.target.value))}
               className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
@@ -97,9 +119,8 @@ export function TimelineControls({
             />
           </div>
           <div className="mt-1 flex justify-between text-[9px] font-mono text-muted-foreground/90">
-            <span>x0.5</span>
-            <span>x1.0</span>
-            <span>x1.5</span>
+            <span>x1</span>
+            <span>x4</span>
           </div>
         </div>
       </div>

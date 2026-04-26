@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 
-import { getHistory } from "@/lib/api";
+import { getHistory, getScenarios } from "@/lib/api";
+import { FloatingCopilot } from "@/components/floating-copilot";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface HistoryRow {
+  scenario_id?: string;
   t: number;
   temperature: number;
   humidity: number;
@@ -58,14 +61,12 @@ function allCompHealths(row: HistoryRow): number[] {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const SCENARIO  = "baseline_nominal";
+const ALL_SCENARIOS = "all";
 const PAGE_SIZE = 50;
 
-const SCENARIOS = [
+const FALLBACK_SCENARIOS = [
   "baseline_nominal",
   "humid_factory",
-  "chaos_run",
-  "no_maintenance",
-  "fixed_schedule",
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -107,30 +108,63 @@ function FilterGroup({ label, children }: { label: string; children: React.React
 const inputCls =
   "bg-card border border-border rounded px-2 py-1 text-xs font-mono text-foreground focus:outline-none focus:border-primary/60 transition-colors";
 
+function numberParam(value: string | null, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function filtersFromSearchParams(searchParams: URLSearchParams): Filters {
+  const scenario = searchParams.get("scenario") ?? ALL_SCENARIOS;
+  return {
+    scenario,
+    runNumber: numberParam(searchParams.get("runNumber"), 0),
+    startT: Math.max(0, numberParam(searchParams.get("startT"), 0)),
+    endT: Math.max(0, numberParam(searchParams.get("endT"), 999)),
+    statusFilter: searchParams.get("status") ?? "all",
+  };
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default function LogsPage() {
+function LogsPageContent() {
+  const searchParams = useSearchParams();
+  const searchKey = searchParams.toString();
   const [rows,    setRows]    = useState<HistoryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
   const [page,    setPage]    = useState(0);
+  const [scenarios, setScenarios] = useState<string[]>(FALLBACK_SCENARIOS);
   const isDemo = false;
 
-  const [filters, setFilters] = useState<Filters>({
-    scenario:     SCENARIO,
-    runNumber:    0,
-    startT:       0,
-    endT:         999,
-    statusFilter: "all",
-  });
+  const [filters, setFilters] = useState<Filters>(() => filtersFromSearchParams(searchParams));
 
-  const [draft, setDraft] = useState(filters);
+  const [draft, setDraft] = useState<Filters>(() => filtersFromSearchParams(searchParams));
   const abortRef = useRef<AbortController | null>(null);
 
   function applyFilters() {
     setFilters(draft);
     setPage(0);
   }
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    getScenarios(ctrl.signal)
+      .then(items => {
+        const ids = items.map(item => item.scenario_id).filter(Boolean);
+        if (ids.length > 0) setScenarios(ids);
+      })
+      .catch(() => {
+        if (!ctrl.signal.aborted) setScenarios(FALLBACK_SCENARIOS);
+      });
+    return () => ctrl.abort();
+  }, []);
+
+  useEffect(() => {
+    const next = filtersFromSearchParams(searchParams);
+    setFilters(next);
+    setDraft(next);
+    setPage(0);
+  }, [searchKey, searchParams]);
 
   useEffect(() => {
     abortRef.current?.abort();
@@ -144,9 +178,19 @@ export default function LogsPage() {
       }
     });
 
-    getHistory(filters.scenario, filters.runNumber, filters.startT, filters.endT, ctrl.signal)
-      .then((data: HistoryRow[]) => {
-        if (!ctrl.signal.aborted) { setRows(data); setError(null); }
+    const scenarioIds = filters.scenario === ALL_SCENARIOS ? scenarios : [filters.scenario];
+
+    Promise.all(
+      scenarioIds.map(scenarioId =>
+        getHistory(scenarioId, filters.runNumber, filters.startT, filters.endT, ctrl.signal)
+          .then((data: HistoryRow[]) => data.map(row => ({ ...row, scenario_id: scenarioId }))),
+      ),
+    )
+      .then((data) => {
+        if (!ctrl.signal.aborted) {
+          setRows(data.flat().sort((a, b) => a.t - b.t || (a.scenario_id ?? "").localeCompare(b.scenario_id ?? "")));
+          setError(null);
+        }
       })
       .catch((e: Error) => {
         if (e.name !== "AbortError") {
@@ -157,7 +201,7 @@ export default function LogsPage() {
       .finally(() => {
         if (!ctrl.signal.aborted) setLoading(false);
       });
-  }, [filters]);
+  }, [filters, scenarios]);
 
   const filtered = rows.filter(row => {
     if (filters.statusFilter === "all") return true;
@@ -172,6 +216,16 @@ export default function LogsPage() {
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const pageRows   = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
+  useEffect(() => {
+    if (totalPages === 0 && page !== 0) {
+      setPage(0);
+      return;
+    }
+    if (totalPages > 0 && page >= totalPages) {
+      setPage(totalPages - 1);
+    }
+  }, [page, totalPages]);
+
   return (
     <div className="h-full flex flex-col gap-0 overflow-hidden bg-background">
 
@@ -184,7 +238,8 @@ export default function LogsPage() {
             onChange={e => setDraft(d => ({ ...d, scenario: e.target.value }))}
             className={inputCls}
           >
-            {SCENARIOS.map(s => <option key={s} value={s}>{s}</option>)}
+            <option value={ALL_SCENARIOS}>All scenarios</option>
+            {scenarios.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </FilterGroup>
 
@@ -218,7 +273,10 @@ export default function LogsPage() {
         <FilterGroup label="Status">
           <select
             value={filters.statusFilter}
-            onChange={e => setFilters(f => ({ ...f, statusFilter: e.target.value }))}
+            onChange={e => {
+              setFilters(f => ({ ...f, statusFilter: e.target.value }));
+              setPage(0);
+            }}
             className={inputCls}
           >
             <option value="all">All rows</option>
@@ -252,9 +310,10 @@ export default function LogsPage() {
 
       {/* ── Table ── */}
       <div className="flex-1 min-h-0 overflow-auto">
-          <table className="text-xs border-separate border-spacing-0" style={{ minWidth: 1320, width: "100%" }}>
+          <table className="text-xs border-separate border-spacing-0" style={{ minWidth: 1420, width: "100%" }}>
             <colgroup>
               <col style={{ minWidth: 48 }} />
+              <col style={{ minWidth: 120 }} />
               <col style={{ minWidth: 76 }} />
               <col style={{ minWidth: 66 }} />
               {/* Recoating */}
@@ -274,6 +333,7 @@ export default function LogsPage() {
               {/* Row 1 — subsystem group headers */}
               <tr className="border-b border-border/60">
                 <th className="px-3 py-1.5 text-left font-mono text-[10px] text-foreground/60 tracking-wide" rowSpan={2}>T</th>
+                <th className="px-3 py-1.5 text-left font-mono text-[10px] text-foreground/60 tracking-wide" rowSpan={2}>Scenario</th>
                 <th className="px-3 py-1.5 text-left font-mono text-[10px] text-foreground/60 tracking-wide" rowSpan={2}>Temp °C</th>
                 <th className="px-3 py-1.5 text-left font-mono text-[10px] text-foreground/60 tracking-wide" rowSpan={2}>Humid</th>
                 <th
@@ -317,7 +377,7 @@ export default function LogsPage() {
             <tbody>
               {!loading && pageRows.length === 0 && (
                 <tr>
-                  <td colSpan={12} className="text-center text-muted-foreground font-mono text-xs py-10">
+                  <td colSpan={13} className="text-center text-muted-foreground font-mono text-xs py-10">
                     NO ROWS MATCH CURRENT FILTERS
                   </td>
                 </tr>
@@ -339,7 +399,7 @@ export default function LogsPage() {
 
                 return (
                   <tr
-                    key={row.t}
+                    key={`${row.scenario_id ?? filters.scenario}-${row.t}`}
                     className={[
                       "border-b border-border/30 transition-colors",
                       rowCrit  ? "bg-red-500/5 hover:bg-red-500/10" :
@@ -348,6 +408,7 @@ export default function LogsPage() {
                     ].join(" ")}
                   >
                     <td className="px-3 py-1.5 font-mono font-bold tabular-nums text-primary">{row.t}</td>
+                    <td className="px-3 py-1.5 font-mono text-[10px] text-muted-foreground">{row.scenario_id ?? filters.scenario}</td>
                     <td className="px-3 py-1.5 font-mono tabular-nums text-muted-foreground">{row.temperature.toFixed(1)}</td>
                     <td className="px-3 py-1.5 font-mono tabular-nums text-muted-foreground">{(row.humidity * 100).toFixed(0)}%</td>
 
@@ -398,6 +459,16 @@ export default function LogsPage() {
           </div>
         </div>
       )}
+
+      <FloatingCopilot scenarioId={filters.scenario === ALL_SCENARIOS ? SCENARIO : filters.scenario} runNumber={filters.runNumber} />
     </div>
+  );
+}
+
+export default function LogsPage() {
+  return (
+    <Suspense fallback={<div className="p-4 text-xs font-mono text-muted-foreground">LOADING LOGS...</div>}>
+      <LogsPageContent />
+    </Suspense>
   );
 }

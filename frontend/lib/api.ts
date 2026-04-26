@@ -1,6 +1,6 @@
-import type { ChatResponse, HistoryRow, MachineState } from "@/lib/api-types";
+import type { ChatResponse, HistoryRow, MachineState, ScenarioMeta } from "@/lib/api-types";
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { signal });
@@ -36,6 +36,10 @@ export function getHistory(
   );
 }
 
+export function getScenarios(signal?: AbortSignal) {
+  return getJson<ScenarioMeta[]>("/api/scenarios", signal);
+}
+
 export function getLatestState(scenarioId: string, runNumber = 0, signal?: AbortSignal) {
   return getJson<MachineState>(
     `/api/runs/${scenarioId}/state/latest?run_number=${runNumber}`,
@@ -56,7 +60,7 @@ export async function askCopilot(params: {
   runNumber?: number;
   t?: number;
 }) {
-  const res = await fetch(`${API_BASE}/api/chat`, {
+  const res = await fetch(`${API_BASE}/api/llm`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
