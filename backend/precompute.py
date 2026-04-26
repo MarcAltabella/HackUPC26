@@ -37,7 +37,7 @@ OUT = Path(__file__).parent / "precomputed.json"
 MODELS_DIR = Path(__file__).parent.parent / "models" / "artifacts" / "models"
 
 RUN_NUMBER = 0
-N = 100  # ticks per scenario
+N = 1000  # ticks per scenario
 
 LABEL_TO_STATUS = {0: "FUNCTIONAL", 1: "DEGRADED", 2: "CRITICAL", 3: "FAILED"}
 ACTION_LABELS = {0: "do_nothing", 1: "light_service", 2: "full_maintenance"}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { TimelineControls } from "@/components/timeline-controls";
 import { getHistory, getLatestState } from "@/lib/api";
@@ -8,8 +8,9 @@ import type { HistoryRow, MachineState } from "@/lib/api-types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const SCENARIO  = "baseline_nominal";
-const BASE_SPEED = 3; // ticks per second at 1x
+const SCENARIO      = "baseline_nominal";
+const TICK_INTERVAL = 333;
+const LOOP_PAUSE    = 1500;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -71,19 +72,6 @@ function getKpisFromRow(row: HistoryRow) {
     critical:  statuses.filter(s => s === "FAILED" || s === "CRITICAL").length,
     warning:   statuses.filter(s => s === "WARNING" || s === "DEGRADED").length,
     avgHealth: (row.health_recoating + row.health_printhead + row.health_thermal) / 3,
-  };
-}
-
-// Linear interpolation between two rows
-function lerpRows(a: HistoryRow, b: HistoryRow, t: number): HistoryRow {
-  const lerp = (x: number, y: number) => x + (y - x) * t;
-  return {
-    ...a,
-    health_recoating: lerp(a.health_recoating, b.health_recoating),
-    health_printhead: lerp(a.health_printhead, b.health_printhead),
-    health_thermal:   lerp(a.health_thermal,   b.health_thermal),
-    temperature:      lerp(a.temperature,      b.temperature),
-    humidity:         lerp(a.humidity,         b.humidity),
   };
 }
 
@@ -175,7 +163,7 @@ function KpiStrip({ animTick, critical, warning, avgHealth, scenarioId, runNumbe
 
 function LineChart({ data, animTick, totalTicks, color, label, unit, yMin, yMax }: {
   data: number[];        // full history of this series
-  animTick: number;      // float — current position in data
+  animTick: number;
   totalTicks: number;
   color: string;
   label: string;
@@ -279,7 +267,7 @@ function LineChart({ data, animTick, totalTicks, color, label, unit, yMin, yMax 
 function DegradationRow({ label, fullData, animTick, currentHealth }: {
   label: string;
   fullData: number[];
-  animTick: number;   // float
+  animTick: number;
   currentHealth: number;
 }) {
   const maxSegments = 140;
@@ -332,16 +320,8 @@ export default function DashboardPage() {
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState<string | null>(null);
   const isDemo = false;
-  const [animTick, setAnimTick] = useState(0); // float
+  const [animTick, setAnimTick] = useState(0);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
-
-  // Mutable refs for the RAF loop — avoids closure-stale issues
-  const animTimeRef  = useRef(0);
-  const speedRef     = useRef(1);
-  const pausedRef    = useRef(false);
-  const lastTimeRef  = useRef<number | null>(null);
-  const rafRef       = useRef<number | null>(null);
-  const pauseTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Live state polling
   useEffect(() => {
@@ -359,10 +339,6 @@ export default function DashboardPage() {
     return () => { alive = false; clearInterval(id); };
   }, []);
 
-  useEffect(() => {
-    speedRef.current = playbackSpeed;
-  }, [playbackSpeed]);
-
   // History fetch
   useEffect(() => {
     const ctrl = new AbortController();
@@ -372,6 +348,7 @@ export default function DashboardPage() {
         if (rows.length === 0) throw new Error("API returned no history rows");
         setHistory(rows);
         setError(null);
+        setAnimTick(0);
       })
       .catch((err: Error) => {
         if (!ctrl.signal.aborted) {
@@ -385,45 +362,20 @@ export default function DashboardPage() {
     return () => ctrl.abort();
   }, []);
 
-  // RAF animation loop — smooth fractional tick
+  // Animation loop — t advances by 10 per tick
   useEffect(() => {
     if (history.length === 0) return;
-    const total = history.length;
-
-    animTimeRef.current = 0;
-    pausedRef.current   = false;
-    lastTimeRef.current = null;
-    requestAnimationFrame(() => setAnimTick(0));
-
-    function frame(now: number) {
-      const dt = lastTimeRef.current === null ? 0 : (now - lastTimeRef.current) / 1000;
-      lastTimeRef.current = now;
-
-      if (!pausedRef.current) {
-        animTimeRef.current = Math.min(animTimeRef.current + dt * BASE_SPEED * speedRef.current, total - 1);
-
-        if (animTimeRef.current >= total - 1) {
-          animTimeRef.current = total - 1;
-          pausedRef.current   = true;
-          pauseTimeout.current = setTimeout(() => {
-            animTimeRef.current = 0;
-            pausedRef.current   = false;
-            lastTimeRef.current = null;
-          }, 1500);
-        }
-
-        setAnimTick(animTimeRef.current);
-      }
-
-      rafRef.current = requestAnimationFrame(frame);
+    const maxTick = history.length - 1;
+    if (animTick >= maxTick) {
+      const id = setTimeout(() => setAnimTick(0), LOOP_PAUSE);
+      return () => clearTimeout(id);
     }
-
-    rafRef.current = requestAnimationFrame(frame);
-    return () => {
-      if (rafRef.current)       cancelAnimationFrame(rafRef.current);
-      if (pauseTimeout.current) clearTimeout(pauseTimeout.current);
-    };
-  }, [history]);
+    const id = setTimeout(
+      () => setAnimTick(t => Math.min(t + 10, maxTick)),
+      TICK_INTERVAL / playbackSpeed,
+    );
+    return () => clearTimeout(id);
+  }, [animTick, history.length, playbackSpeed]);
 
   // ── Derived values ──────────────────────────────────────────────────────────
 
@@ -471,12 +423,7 @@ export default function DashboardPage() {
 
   const totalTicks = history.length;
 
-  const floor = Math.min(Math.floor(animTick), history.length - 1);
-  const frac  = animTick - Math.floor(animTick);
-  const rowA  = history[floor]                          ?? history[0];
-  const rowB  = history[Math.min(floor + 1, history.length - 1)] ?? rowA;
-
-  const currentRow = lerpRows(rowA, rowB, frac);
+  const currentRow = history[Math.min(animTick, history.length - 1)] ?? history[0];
   const { critical, warning, avgHealth } = getKpisFromRow(currentRow);
 
   // Pre-computed full series for charts (stable references — recomputed only when history changes)
@@ -491,14 +438,8 @@ export default function DashboardPage() {
   };
 
   function handleScrub(nextTick: number) {
-    const bounded = Math.max(0, Math.min(nextTick, Math.max(history.length - 1, 0)));
-    animTimeRef.current = bounded;
-    pausedRef.current = false;
-    lastTimeRef.current = null;
-    if (pauseTimeout.current) {
-      clearTimeout(pauseTimeout.current);
-      pauseTimeout.current = null;
-    }
+    const snapped = Math.round(nextTick / 10) * 10;
+    const bounded = Math.max(0, Math.min(snapped, history.length - 1));
     setAnimTick(bounded);
   }
 

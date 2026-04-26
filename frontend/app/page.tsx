@@ -509,7 +509,7 @@ export default function MachinePage() {
       return () => clearTimeout(id);
     }
     const msPerTick = TICK_INTERVAL / (BASE_SPEED * playbackSpeed);
-    const id = setTimeout(() => setAnimTick(t => Math.min(t + 1, maxTick)), msPerTick);
+    const id = setTimeout(() => setAnimTick(t => Math.min(t + 10, maxTick)), msPerTick);
     return () => clearTimeout(id);
   }, [animTick, timeline.length, playbackSpeed]);
 
