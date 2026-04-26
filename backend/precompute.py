@@ -1,4 +1,4 @@
-"""Generate precomputed.json — all 7 scenarios, outputs full API shapes."""
+"""Generate precomputed.json — all 7 scenarios, stateful physics degradation."""
 from __future__ import annotations
 
 import json
@@ -11,8 +11,7 @@ import torch
 import torch.nn as nn
 
 sys.path.append(str(Path(__file__).parent.parent))
-from models.components.hp_s100_engine import HP100Engine
-from models.src.dense_training_base import DriverVector
+from models.src.generate_dataset import Phase1State, step_phase1, Drivers
 
 
 class ComponentClassifier(nn.Module):
@@ -37,15 +36,14 @@ OUT = Path(__file__).parent / "precomputed.json"
 MODELS_DIR = Path(__file__).parent.parent / "models" / "artifacts" / "models"
 
 RUN_NUMBER = 0
-N = 1000  # ticks per scenario
+N = 1000
 
 LABEL_TO_STATUS = {0: "FUNCTIONAL", 1: "DEGRADED", 2: "CRITICAL", 3: "FAILED"}
-ACTION_LABELS = {0: "do_nothing", 1: "light_service", 2: "full_maintenance"}
+ACTION_LABELS   = {0: "do_nothing", 1: "light_service", 2: "full_maintenance"}
 ACTION_TO_MAINTENANCE = {0: 0.0, 1: 0.5, 2: 1.0}
 
 COMPONENTS = ["blade", "motor", "rail", "nozzle", "resistor", "cleaning", "heater", "sensor", "insulation"]
 
-# Scenario definitions — mirrors generate_dataset.py
 SCENARIO_SEEDS: dict[str, int] = {
     "baseline_nominal": 0,
     "humid_factory":    1_000_000,
@@ -56,7 +54,6 @@ SCENARIO_SEEDS: dict[str, int] = {
     "optimal_care":     6_000_000,
 }
 
-# (scenario_id, env_profile, chaos_prob, maintenance_schedule)
 SCENARIO_CONFIGS: list[tuple[str, str, float, str]] = [
     ("baseline_nominal", "deterministic", 0.00, "light"),
     ("humid_factory",    "stochastic",    0.01, "light"),
@@ -67,54 +64,54 @@ SCENARIO_CONFIGS: list[tuple[str, str, float, str]] = [
     ("optimal_care",     "stochastic",    0.00, "full"),
 ]
 
+# metric_field matches keys from step_phase1 metrics dict
 COMPONENT_META = {
-    "blade":      {"display": "Blade",      "subsystem": "Recoating", "metric_field": "thickness_mm",         "metric_label": "thickness",         "unit": "mm", "model_key": "recoater_blade"},
-    "motor":      {"display": "Motor",      "subsystem": "Recoating", "metric_field": "stall_probability",    "metric_label": "stall prob",        "unit": "",   "model_key": "recoater_drive_motor"},
-    "rail":       {"display": "Rail",       "subsystem": "Recoating", "metric_field": "misalignment_mm",      "metric_label": "misalignment",      "unit": "mm", "model_key": "linear_guide_rail"},
-    "nozzle":     {"display": "Nozzle",     "subsystem": "Printhead", "metric_field": "clog_ratio",           "metric_label": "clog ratio",        "unit": "",   "model_key": "nozzle_plate"},
-    "resistor":   {"display": "Resistor",   "subsystem": "Printhead", "metric_field": "resistance_drift_pct", "metric_label": "resistance drift",  "unit": "%",  "model_key": "thermal_firing_resistors"},
-    "cleaning":   {"display": "Cleaning",   "subsystem": "Printhead", "metric_field": "wipe_efficiency",      "metric_label": "wipe efficiency",   "unit": "",   "model_key": "cleaning_interface"},
-    "heater":     {"display": "Heater",     "subsystem": "Thermal",   "metric_field": "energy_overhead_pct",  "metric_label": "energy overhead",   "unit": "%",  "model_key": "heating_elements"},
-    "sensor":     {"display": "Sensor",     "subsystem": "Thermal",   "metric_field": "sensor_drift_c",       "metric_label": "sensor drift",      "unit": "C",  "model_key": "temperature_sensors"},
-    "insulation": {"display": "Insulation", "subsystem": "Thermal",   "metric_field": "heat_loss_factor",     "metric_label": "heat loss factor",  "unit": "",   "model_key": "insulation_panels"},
+    "blade":      {"display": "Blade",      "subsystem": "Recoating", "metric_field": "metric_blade_mm",     "metric_label": "thickness",         "unit": "mm"},
+    "motor":      {"display": "Motor",      "subsystem": "Recoating", "metric_field": "metric_motor_vib",    "metric_label": "vibration",         "unit": "mm/s"},
+    "rail":       {"display": "Rail",       "subsystem": "Recoating", "metric_field": "metric_rail_dev",     "metric_label": "deviation",         "unit": "µm"},
+    "nozzle":     {"display": "Nozzle",     "subsystem": "Printhead", "metric_field": "metric_nozzle_clog",  "metric_label": "clog ratio",        "unit": ""},
+    "resistor":   {"display": "Resistor",   "subsystem": "Printhead", "metric_field": "metric_resistor_pct", "metric_label": "resistance drift",  "unit": "%"},
+    "cleaning":   {"display": "Cleaning",   "subsystem": "Printhead", "metric_field": "metric_cleaning_eff", "metric_label": "wipe efficiency",   "unit": ""},
+    "heater":     {"display": "Heater",     "subsystem": "Thermal",   "metric_field": "metric_heater_ohm",   "metric_label": "resistance",        "unit": "Ω"},
+    "sensor":     {"display": "Sensor",     "subsystem": "Thermal",   "metric_field": "metric_sensor_err",   "metric_label": "sensor error",      "unit": "°C"},
+    "insulation": {"display": "Insulation", "subsystem": "Thermal",   "metric_field": "metric_insulation_r", "metric_label": "thermal resistance", "unit": ""},
 }
+
+# Health key in step_phase1 metrics for each component
+HEALTH_KEY = {c: f"health_{c}" for c in COMPONENTS}
 
 
 def load_models():
     models: dict = {}
     scalers: dict = {}
     for comp in COMPONENTS:
-        model_path = MODELS_DIR / f"{comp}_classifier.pt"
-        if not model_path.exists():
+        path = MODELS_DIR / f"{comp}_classifier.pt"
+        if not path.exists():
             continue
         try:
             import warnings
             warnings.filterwarnings("ignore")
-            checkpoint = torch.load(model_path, weights_only=False, map_location="cpu")
-            model = ComponentClassifier(**checkpoint["config"])
-            model.load_state_dict(checkpoint["state_dict"])
-            model.eval()
-            models[comp] = model
+            ck = torch.load(path, weights_only=False, map_location="cpu")
+            m = ComponentClassifier(**ck["config"])
+            m.load_state_dict(ck["state_dict"])
+            m.eval()
+            models[comp] = m
             scalers[comp] = {
-                "mean": torch.tensor(checkpoint["mean"], dtype=torch.float32),
-                "std":  torch.tensor(checkpoint["std"],  dtype=torch.float32),
+                "mean": torch.tensor(ck["mean"], dtype=torch.float32),
+                "std":  torch.tensor(ck["std"],  dtype=torch.float32),
             }
         except Exception as e:
-            print(f"Failed to load {comp}: {e}")
+            print(f"[warn] could not load {comp} model: {e}")
     return models, scalers
 
 
 MODELS, SCALERS = load_models()
 
 
-def wave(t: int, freq: float, amp: float) -> float:
-    return math.sin(t * freq) * amp
-
-
 def health_to_label(h: float) -> int:
-    if h > 0.75: return 0
-    if h > 0.50: return 1
-    if h > 0.25: return 2
+    if h > 0.70: return 0
+    if h > 0.40: return 1
+    if h > 0.20: return 2
     return 3
 
 
@@ -129,18 +126,22 @@ def make_prediction(comp: str, features: list[float]) -> dict:
     with torch.no_grad():
         x = torch.tensor([features], dtype=torch.float32)
         x = (x - SCALERS[comp]["mean"]) / SCALERS[comp]["std"]
-        logits = MODELS[comp](x)
-        probs = torch.softmax(logits, dim=1).squeeze(0).tolist()
+        p = torch.softmax(MODELS[comp](x), dim=1).squeeze(0).tolist()
 
-    num_classes = len(probs)
-    label = max(range(num_classes), key=lambda i: probs[i])
-    full_probs = {LABEL_TO_STATUS[i]: round(probs[i] if i < num_classes else 0.0, 6) for i in range(4)}
-    return {"label": label, "status": LABEL_TO_STATUS[label], "confidence": probs[label], "probabilities": full_probs}
+    label = max(range(len(p)), key=lambda i: p[i])
+    return {
+        "label": label,
+        "status": LABEL_TO_STATUS[label],
+        "confidence": p[label],
+        "probabilities": {LABEL_TO_STATUS[i]: round(p[i] if i < len(p) else 0.0, 6) for i in range(4)},
+    }
 
 
 def format_metric(value: float, unit: str) -> str:
-    if unit == "%": return f"{value:.1f}%"
-    if unit:        return f"{value:.2f} {unit}"
+    if unit == "%":  return f"{value:.1f}%"
+    if unit == "Ω":  return f"{value:.1f} Ω"
+    if unit == "°C": return f"{value:.2f} °C"
+    if unit:         return f"{value:.2f} {unit}"
     return f"{value:.3f}"
 
 
@@ -160,57 +161,73 @@ def recommended_actions(component: str, severity: str) -> list[str]:
 
 
 def pick_action(hr: float, hp: float, ht: float, steps: int) -> int:
-    min_h = min(hr, hp, ht)
-    if min_h < 0.40 or steps > 80: return 2
-    if min_h < 0.65 or steps > 50: return 1
+    m = min(hr, hp, ht)
+    if m < 0.40 or steps > 80: return 2
+    if m < 0.65 or steps > 50: return 1
     return 0
 
 
-def get_maintenance_action(schedule: str, t: int, hr: float, hp: float, ht: float, steps_since_maint: int) -> int:
-    if schedule == "none":
-        return 0
-    if schedule == "full":
-        return 2
-    if schedule == "fixed_100":
-        return 2 if t % 100 == 0 else 0
-    # "light" → adaptive Q-table policy
-    return pick_action(hr, hp, ht, steps_since_maint)
+def get_maintenance_action(schedule: str, t: int, hr: float, hp: float, ht: float, steps: int) -> int:
+    if schedule == "none":      return 0
+    if schedule == "full":      return 2
+    if schedule == "fixed_100": return 2 if t % 100 == 0 else 0
+    return pick_action(hr, hp, ht, steps)
 
 
-def gen_env_drivers(
-    t: int, env_profile: str, chaos_prob: float, rng: np.random.Generator
-) -> tuple[float, float, bool]:
-    p = t / (N - 1) if N > 1 else 0.0
-    base_temp = 20.0 + p * 30.0  # 20°C → 50°C
-    base_hum = 0.40
+def gen_env_series(profile: str, chaos_prob: float, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Ornstein-Uhlenbeck processes for temperature and humidity — natural autocorrelated variation."""
+    trend_temp = np.linspace(20.0, 50.0, N)
+    trend_hum  = np.linspace(0.35, 0.52, N)
 
-    if env_profile == "deterministic":
-        return base_temp, base_hum, False
+    params = {
+        "deterministic": (0.18, 1.4,  0.10, 0.022),
+        "stochastic":    (0.12, 3.2,  0.08, 0.055),
+        "chaos":         (0.07, 6.0,  0.06, 0.095),
+    }
+    theta_t, sigma_t, theta_h, sigma_h = params[profile]
 
-    if env_profile == "stochastic":
-        temp = float(np.clip(base_temp + rng.normal(0, 2.0), 15, 70))
-        hum = float(np.clip(base_hum + rng.normal(0, 0.05), 0.0, 1.0))
+    temps  = np.empty(N)
+    hums   = np.empty(N)
+    shocks = np.zeros(N, dtype=bool)
+    temp = trend_temp[0] + rng.normal(0, sigma_t)
+    hum  = trend_hum[0]  + rng.normal(0, sigma_h)
+
+    for t in range(N):
+        temp += theta_t * (trend_temp[t] - temp) + sigma_t * rng.normal()
+        hum  += theta_h * (trend_hum[t]  - hum)  + sigma_h * rng.normal()
+        temp  = float(np.clip(temp, 15.0, 70.0))
+        hum   = float(np.clip(hum,  0.0,  1.0))
+
         shock = bool(rng.random() < chaos_prob)
         if shock:
-            hum = min(1.0, hum + 0.25)
-        return temp, hum, shock
+            if profile == "chaos" and rng.random() < 0.5:
+                temp = min(70.0, temp + float(rng.uniform(8, 22)))
+            else:
+                hum = min(1.0, hum + float(rng.uniform(0.15, 0.35)))
 
-    # chaos
-    temp = float(np.clip(base_temp + rng.normal(0, 3.0), 15, 70))
-    hum = float(np.clip(base_hum + rng.normal(0, 0.07), 0.0, 1.0))
-    shock = bool(rng.random() < chaos_prob)
-    if shock:
-        if rng.random() < 0.5:
-            hum = min(1.0, hum + float(rng.uniform(0.20, 0.50)))
-        else:
-            temp = min(70.0, temp + float(rng.uniform(10, 25)))
-    return temp, hum, shock
+        temps[t]  = temp
+        hums[t]   = hum
+        shocks[t] = shock
+
+    return temps, hums, shocks
 
 
-def make_alerts(t: int, scenario_id: str, components: dict[str, dict], action_label: str) -> list[dict]:
+def gen_load_series(rng: np.random.Generator) -> np.ndarray:
+    """AR(1) load around 0.62 with occasional demand spikes."""
+    loads = np.empty(N)
+    x = 0.62
+    for t in range(N):
+        x = 0.88 * x + 0.12 * 0.62 + 0.04 * rng.normal()
+        if rng.random() < 0.025:
+            x = min(1.0, x + float(rng.uniform(0.12, 0.28)))
+        loads[t] = float(np.clip(x, 0.20, 1.0))
+    return loads
+
+
+def make_alerts(t: int, scenario_id: str, comp_states: dict, action_label: str) -> list[dict]:
     alerts = []
-    severity_rank = {"CRITICAL": 0, "WARNING": 1}
-    for comp, state in components.items():
+    rank = {"CRITICAL": 0, "WARNING": 1}
+    for comp, state in comp_states.items():
         status = state["status"]
         if status == "FUNCTIONAL":
             continue
@@ -218,8 +235,8 @@ def make_alerts(t: int, scenario_id: str, components: dict[str, dict], action_la
         meta = COMPONENT_META[comp]
         mval = state[meta["metric_field"]]
         metric_text = format_metric(mval, meta["unit"])
-        health_pct = state["health"] * 100
-        confidence_pct = state["confidence"] * 100
+        hp = state["health"] * 100
+        conf = state["confidence"] * 100
         alerts.append({
             "id": f"{scenario_id}-{RUN_NUMBER}-{t}-{comp}",
             "severity": severity,
@@ -228,12 +245,12 @@ def make_alerts(t: int, scenario_id: str, components: dict[str, dict], action_la
             "component_key": comp,
             "metric": metric_text,
             "summary": (
-                f"{meta['display']} is {status.lower()} at {health_pct:.1f}% health "
+                f"{meta['display']} is {status.lower()} at {hp:.1f}% health "
                 f"({meta['metric_label']} {metric_text})."
             ),
             "reasoning": [
-                f"Phase 1 classifier predicts {status} with {confidence_pct:.1f}% confidence.",
-                f"Historian health for {comp} is {health_pct:.1f}% at t={t}.",
+                f"Phase 1 classifier predicts {status} with {conf:.1f}% confidence.",
+                f"Historian health for {comp} is {hp:.1f}% at t={t}.",
                 f"Q-table recommends {action_label.replace('_', ' ')} for this tick.",
             ],
             "actions": recommended_actions(comp, severity),
@@ -244,56 +261,56 @@ def make_alerts(t: int, scenario_id: str, components: dict[str, dict], action_la
                 {"run_id": scenario_id, "run_number": RUN_NUMBER, "t": t, "field": f"metric_{comp}", "value": round(mval, 6)},
             ],
         })
-    return sorted(alerts, key=lambda a: (severity_rank[a["severity"]], a["component"]))
+    return sorted(alerts, key=lambda a: (rank[a["severity"]], a["component"]))
 
 
-def build_timeline(
-    scenario_id: str, env_profile: str, chaos_prob: float, maintenance_schedule: str, seed: int
-) -> list[dict]:
+def build_timeline(scenario_id: str, env_profile: str, chaos_prob: float, maintenance_schedule: str, seed: int) -> list[dict]:
     rng = np.random.default_rng(seed)
+    temps, hums, shocks = gen_env_series(env_profile, chaos_prob, rng)
+    loads = gen_load_series(rng)
+
     timeline = []
     steps_since_maint = 0
     cumulative_shocks = 0
     prev_healths = {c: 1.0 for c in COMPONENTS}
-    engine = HP100Engine()
+    state = Phase1State()  # stateful: accumulates real degradation over time
 
     for t in range(N):
-        temperature, humidity, is_shock = gen_env_drivers(t, env_profile, chaos_prob, rng)
+        temperature = round(float(temps[t]), 4)
+        humidity    = round(float(hums[t]),  4)
+        is_shock    = bool(shocks[t])
+        load_frac   = round(float(loads[t]), 3)
+
         if is_shock:
             cumulative_shocks += 1
-
-        load = round(0.6 + wave(t, 0.1, 0.15), 3)
 
         hr = sum(prev_healths[c] for c in ["blade", "motor", "rail"]) / 3
         hp = sum(prev_healths[c] for c in ["nozzle", "resistor", "cleaning"]) / 3
         ht = sum(prev_healths[c] for c in ["heater", "sensor", "insulation"]) / 3
 
         action = get_maintenance_action(maintenance_schedule, t, hr, hp, ht, steps_since_maint)
-        action_label = ACTION_LABELS[action]
+        action_label    = ACTION_LABELS[action]
         maintenance_level = ACTION_TO_MAINTENANCE[action]
 
-        drivers = DriverVector(
-            temperature_stress=(temperature - 20) / 10,
-            humidity_contamination=humidity,
-            operational_load=load,
+        # step_phase1 expects Drivers with load as cumulative hours; we use t directly
+        drivers = Drivers(
+            temperature=temperature,
+            humidity=humidity,
+            load=float(t),
             maintenance_level=maintenance_level,
+            is_shock=is_shock,
         )
-        reports = engine.step(drivers)
+        state, metrics = step_phase1(state, drivers)
 
-        healths: dict[str, float] = {}
-        mvals: dict[str, float] = {}
-        for c in COMPONENTS:
-            model_key = COMPONENT_META[c]["model_key"]
-            rep = reports[model_key]
-            healths[c] = rep.health_index
-            mvals[c] = rep.metrics[COMPONENT_META[c]["metric_field"]]
+        healths = {c: float(metrics[HEALTH_KEY[c]]) for c in COMPONENTS}
+        mvals   = {c: float(metrics[COMPONENT_META[c]["metric_field"]]) for c in COMPONENTS}
 
         hr = sum(healths[c] for c in ["blade", "motor", "rail"]) / 3
         hp = sum(healths[c] for c in ["nozzle", "resistor", "cleaning"]) / 3
         ht = sum(healths[c] for c in ["heater", "sensor", "insulation"]) / 3
 
         features = [
-            temperature, humidity, load, maintenance_level,
+            temperature, humidity, load_frac, maintenance_level,
             float(is_shock), float(steps_since_maint), float(cumulative_shocks),
         ] + [prev_healths[c] for c in COMPONENTS]
 
@@ -314,81 +331,73 @@ def build_timeline(
             }
 
         alerts = make_alerts(t, scenario_id, comp_states, action_label)
+        top    = alerts[0] if alerts else None
 
-        top_alert = alerts[0] if alerts else None
-        chat_severity = top_alert["severity"] if top_alert else "INFO"
-        if top_alert:
-            chat_summary = top_alert["summary"][:140]
-            chat_answer = (
-                f"At t={t}, the highest-priority issue is {top_alert['component']} in the "
-                f"{top_alert['subsystem']} subsystem. {top_alert['summary']} "
-                f"The Q-table policy recommends {action_label.replace('_', ' ')} "
-                f"(maintenance level {ACTION_TO_MAINTENANCE[action]})."
-            )
-            chat_reasoning = top_alert["reasoning"]
-            chat_citations = top_alert["citations"]
-            chat_actions = top_alert["actions"]
+        if top:
+            chat = {
+                "severity": top["severity"],
+                "summary": top["summary"][:140],
+                "answer": (
+                    f"At t={t}, the highest-priority issue is {top['component']} in the "
+                    f"{top['subsystem']} subsystem. {top['summary']} "
+                    f"The Q-table policy recommends {action_label.replace('_', ' ')} "
+                    f"(maintenance level {maintenance_level})."
+                ),
+                "reasoning_summary": top["reasoning"][:5],
+                "citations": top["citations"],
+                "recommended_actions": top["actions"],
+            }
         else:
-            chat_summary = "All monitored components are functional."
-            chat_answer = (
-                f"At t={t}, all monitored components are functional. "
-                f"The Q-table policy recommends {action_label.replace('_', ' ')}."
-            )
-            chat_reasoning = [
-                "No alerts are active for this tick.",
-                "All Phase 1 component classifiers returned FUNCTIONAL.",
-                f"Q-table selected action {action} ({action_label}).",
-            ]
-            chat_citations = [{"run_id": scenario_id, "run_number": RUN_NUMBER, "t": t, "field": "health_recoating", "value": round(hr, 6)}]
-            chat_actions = ["Continue monitoring", "Keep current maintenance plan"]
+            chat = {
+                "severity": "INFO",
+                "summary": "All monitored components are functional.",
+                "answer": (
+                    f"At t={t}, all monitored components are functional. "
+                    f"The Q-table policy recommends {action_label.replace('_', ' ')}."
+                ),
+                "reasoning_summary": [
+                    "No alerts are active for this tick.",
+                    "All Phase 1 component classifiers returned FUNCTIONAL.",
+                    f"Q-table selected action {action} ({action_label}).",
+                ],
+                "citations": [{"run_id": scenario_id, "run_number": RUN_NUMBER, "t": t, "field": "health_recoating", "value": round(hr, 6)}],
+                "recommended_actions": ["Continue monitoring", "Keep current maintenance plan"],
+            }
 
         timeline.append({
             "scenario_id": scenario_id,
             "run_number": RUN_NUMBER,
             "t": t,
             "drivers": {
-                "temperature": round(temperature, 4),
-                "humidity": round(humidity, 4),
-                "load": load,
-                "maintenance_level": ACTION_TO_MAINTENANCE[action],
+                "temperature": temperature,
+                "humidity": humidity,
+                "load": load_frac,
+                "maintenance_level": maintenance_level,
                 "is_shock": is_shock,
                 "steps_since_maintenance": steps_since_maint,
                 "cumulative_shocks": cumulative_shocks,
             },
             "recoating": {
                 "subsystem_health": round(hr, 6),
-                "blade": comp_states["blade"],
-                "motor": comp_states["motor"],
-                "rail": comp_states["rail"],
+                **{c: comp_states[c] for c in ["blade", "motor", "rail"]},
             },
             "printhead": {
                 "subsystem_health": round(hp, 6),
-                "nozzle": comp_states["nozzle"],
-                "resistor": comp_states["resistor"],
-                "cleaning": comp_states["cleaning"],
+                **{c: comp_states[c] for c in ["nozzle", "resistor", "cleaning"]},
             },
             "thermal": {
                 "subsystem_health": round(ht, 6),
-                "heater": comp_states["heater"],
-                "sensor": comp_states["sensor"],
-                "insulation": comp_states["insulation"],
+                **{c: comp_states[c] for c in ["heater", "sensor", "insulation"]},
             },
             "model_predictions": predictions,
             "maintenance_recommendation": {
                 "action": action,
                 "action_label": action_label,
-                "maintenance_level": ACTION_TO_MAINTENANCE[action],
+                "maintenance_level": maintenance_level,
                 "reward": round(0.8 - (t / (N - 1)) * 0.6, 6),
             },
             "alerts": alerts,
-            "_chat": {
-                "severity": chat_severity,
-                "summary": chat_summary,
-                "answer": chat_answer,
-                "reasoning_summary": chat_reasoning[:5],
-                "citations": chat_citations,
-                "recommended_actions": chat_actions,
-            },
+            "_chat": chat,
         })
         prev_healths = healths
 
@@ -400,22 +409,16 @@ def build_history(timeline: list[dict]) -> list[dict]:
         {
             "t": row["t"],
             "temperature": row["drivers"]["temperature"],
-            "humidity": row["drivers"]["humidity"],
+            "humidity":    row["drivers"]["humidity"],
             "health_recoating": row["recoating"]["subsystem_health"],
             "health_printhead": row["printhead"]["subsystem_health"],
-            "health_thermal": row["thermal"]["subsystem_health"],
-            "status_blade": row["recoating"]["blade"]["status"],
+            "health_thermal":   row["thermal"]["subsystem_health"],
+            "status_blade":  row["recoating"]["blade"]["status"],
             "status_nozzle": row["printhead"]["nozzle"]["status"],
             "status_heater": row["thermal"]["heater"]["status"],
-            "health_blade": row["recoating"]["blade"]["health"],
-            "health_motor": row["recoating"]["motor"]["health"],
-            "health_rail": row["recoating"]["rail"]["health"],
-            "health_nozzle": row["printhead"]["nozzle"]["health"],
-            "health_resistor": row["printhead"]["resistor"]["health"],
-            "health_cleaning": row["printhead"]["cleaning"]["health"],
-            "health_heater": row["thermal"]["heater"]["health"],
-            "health_sensor": row["thermal"]["sensor"]["health"],
-            "health_insulation": row["thermal"]["insulation"]["health"],
+            **{f"health_{c}": row["recoating"][c]["health"]  for c in ["blade", "motor", "rail"]},
+            **{f"health_{c}": row["printhead"][c]["health"]  for c in ["nozzle", "resistor", "cleaning"]},
+            **{f"health_{c}": row["thermal"][c]["health"]    for c in ["heater", "sensor", "insulation"]},
         }
         for row in timeline
     ]
@@ -428,7 +431,7 @@ if __name__ == "__main__":
         print(f"Computing [{scenario_id}]…")
         seed = SCENARIO_SEEDS[scenario_id]
         timeline = build_timeline(scenario_id, env_profile, chaos_prob, maintenance_schedule, seed)
-        history = build_history(timeline)
+        history  = build_history(timeline)
         scenarios_out[scenario_id] = {
             "scenario_id": scenario_id,
             "run_number": RUN_NUMBER,
@@ -437,8 +440,8 @@ if __name__ == "__main__":
             "timeline": timeline,
             "history": history,
         }
-        print(f"  → {len(timeline)} ticks")
+        last = timeline[-1]
+        print(f"  R={last['recoating']['subsystem_health']:.3f}  P={last['printhead']['subsystem_health']:.3f}  T={last['thermal']['subsystem_health']:.3f}  alerts={sum(len(r['alerts']) for r in timeline)}")
 
-    payload = {"scenarios": scenarios_out}
-    OUT.write_text(json.dumps(payload, indent=2))
+    OUT.write_text(json.dumps({"scenarios": scenarios_out}, indent=2))
     print(f"\nWritten {len(scenarios_out)} scenarios → {OUT}")
